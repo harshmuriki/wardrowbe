@@ -2,10 +2,13 @@
   <img src="./frontend/public/logo.svg" alt="wardrowbe" width="120" height="120">
 </p>
 
-<h1 align="center">Wardrowbe</h1>
+<h1 align="center">wardrowbe</h1>
 
 <p align="center">
-  <em>AI-powered wardrobe management with smart outfit recommendations</em>
+  Row through your style
+</p>
+<p align="center">
+  <a href="https://claude.ai/code"><img src="https://img.shields.io/badge/Built%20with-Claude%20Code-D97757?logo=claude&logoColor=fff" alt="Built with Claude Code"></a>
 </p>
 
 <p align="center">
@@ -36,17 +39,17 @@ Self-hosted wardrobe management with AI-powered outfit recommendations. Take pho
 ### Wardrobe & AI Tagging
 | Wardrobe Grid | AI Analysis |
 |---------------|-------------|
-| ![Wardrobe](screenshots/screenshot-02.png) | ![AI Analysis](screenshots/screenshot-04.png) |
+| ![Wardrobe](screenshots/wardrobe.png) | ![AI Analysis](screenshots/wardrobe-grid.png) |
 
 ### Outfit Suggestions & History
 | Suggestions | History Calendar |
 |-------------|------------------|
-| ![Suggest](screenshots/screenshot-12.png) | ![History](screenshots/screenshot-10.png) |
+| ![Suggest](screenshots/suggest.png) | ![History](screenshots/history.png) |
 
-### Analytics & Notifications
-| Analytics | Notifications |
+### Analytics & Pairing
+| Analytics | Pairing |
 |-----------|---------------|
-| ![Analytics](screenshots/screenshot-08.png) | ![Notifications](screenshots/screenshot-11.png) |
+| ![Analytics](screenshots/analytics.png) | ![Pairing](screenshots/pairings.png) |
 
 ## Quick Start
 
