@@ -47,9 +47,6 @@ services:
       SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
       CORS_ORIGINS: '["http://localhost:3000", "http://frontend:3000"]'
       STORAGE_PATH: /data/wardrobe
-      AUTHENTIK_URL: ${AUTHENTIK_URL:-}
-      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
-      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_VISION_MODEL: ${AI_VISION_MODEL:-gpt-4o}
       AI_TEXT_MODEL: ${AI_TEXT_MODEL:-gpt-4o}
@@ -79,9 +76,18 @@ services:
       dockerfile: Dockerfile
     container_name: wardrobe-frontend
     environment:
+      BACKEND_URL: http://backend:8000
       NEXT_PUBLIC_API_URL: http://backend:8000
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me-in-production}
+      # Auth providers (leave empty for dev credentials)
+      AUTHENTIK_URL: ${AUTHENTIK_URL:-}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
+      POCKETID_URL: ${POCKETID_URL:-}
+      POCKETID_CLIENT_ID: ${POCKETID_CLIENT_ID:-}
+      POCKETID_CLIENT_SECRET: ${POCKETID_CLIENT_SECRET:-}
+      AUTH_TRUST_PROXY: ${AUTH_TRUST_PROXY:-}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:

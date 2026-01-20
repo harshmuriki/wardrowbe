@@ -129,13 +129,18 @@ services:
     container_name: wardrobe_frontend
     restart: unless-stopped
     environment:
+      BACKEND_URL: http://backend:8000
       NEXTAUTH_URL: ${NEXTAUTH_URL:-https://localhost}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
       NEXT_PUBLIC_API_URL: ""
-      # OIDC Provider (Authentik, Pocket ID, Keycloak, etc.)
-      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
-      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      # Auth providers (leave empty for dev credentials)
+      AUTHENTIK_URL: ${AUTHENTIK_URL:-}
+      AUTHENTIK_CLIENT_ID: ${AUTHENTIK_CLIENT_ID:-}
+      AUTHENTIK_CLIENT_SECRET: ${AUTHENTIK_CLIENT_SECRET:-}
+      POCKETID_URL: ${POCKETID_URL:-}
+      POCKETID_CLIENT_ID: ${POCKETID_CLIENT_ID:-}
+      POCKETID_CLIENT_SECRET: ${POCKETID_CLIENT_SECRET:-}
+      AUTH_TRUST_PROXY: ${AUTH_TRUST_PROXY:-}
     depends_on:
       - backend
     healthcheck:
