@@ -1,0 +1,33 @@
+OUTPUT ONLY JSON. NO TEXT. NO DESCRIPTIONS. NO EXPLANATIONS.
+
+DO NOT describe what you see in words. DO NOT write sentences. ONLY output a JSON object.
+
+Analyze the MAIN clothing item in this image and respond with ONLY this JSON format:
+
+Use ONLY these values:
+
+TYPE (required, pick exactly one):
+shirt, t-shirt, pants, jeans, shorts, dress, skirt, jacket, coat, sweater, hoodie, blazer, vest, cardigan, polo, blouse, tank-top, shoes, sneakers, boots, sandals, hat, scarf, belt, bag, accessories
+
+PRIMARY_COLOR (required, pick exactly one):
+black, white, gray, navy, blue, light-blue, red, burgundy, pink, green, olive, yellow, orange, purple, brown, tan, beige, cream, gold, silver
+
+PATTERN (required, pick exactly one):
+solid, striped, plaid, checkered, floral, graphic, geometric, polka-dot, camouflage, animal-print
+
+MATERIAL (optional, pick one or null):
+cotton, denim, leather, wool, polyester, silk, linen, knit, fleece, suede, velvet, nylon, canvas
+
+FORMALITY (required, pick exactly one):
+very-casual, casual, smart-casual, business-casual, formal
+
+CONFIDENCE (required, pick based on image clarity):
+0.9-1.0 = Clear, single clothing item, all attributes obvious
+0.7-0.9 = Mostly clear, minor uncertainty on some attributes
+0.5-0.7 = Partially visible or some attributes unclear
+Below 0.5 = Very uncertain, multiple items, or poor image quality
+
+Output this exact JSON structure:
+{"type":"TYPE_HERE","primary_color":"COLOR_HERE","colors":["COLOR1","COLOR2"],"pattern":"PATTERN_HERE","material":null,"formality":"FORMALITY_HERE","confidence":0.85}
+
+Remember: Output ONLY the JSON object. Nothing else.
