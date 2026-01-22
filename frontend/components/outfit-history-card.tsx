@@ -1,11 +1,18 @@
 'use client';
 
-import { Calendar, Zap, Edit3, ThumbsUp, ThumbsDown, Clock, Eye, Star } from 'lucide-react';
+import { useState } from 'react';
+import { Calendar, Zap, Edit3, ThumbsUp, ThumbsDown, Clock, Eye, Star, ArrowRight, Shirt } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { useAcceptOutfit, useRejectOutfit, type Outfit, type OutfitSource } from '@/lib/hooks/use-outfits';
+import { useAcceptOutfit, useRejectOutfit, type Outfit, type OutfitSource, type WoreInsteadItem } from '@/lib/hooks/use-outfits';
 import Image from 'next/image';
 
 function StatusIcon({ status }: { status: Outfit['status'] }) {
@@ -101,6 +108,7 @@ interface OutfitHistoryCardProps {
 export function OutfitHistoryCard({ outfit, onFeedback, onPreview }: OutfitHistoryCardProps) {
   const acceptOutfit = useAcceptOutfit();
   const rejectOutfit = useRejectOutfit();
+  const [previewItem, setPreviewItem] = useState<WoreInsteadItem | null>(null);
 
   const handleAccept = async () => {
     try {
@@ -180,6 +188,48 @@ export function OutfitHistoryCard({ outfit, onFeedback, onPreview }: OutfitHisto
           </div>
         )}
 
+        {/* Wore instead display */}
+        {outfit.feedback?.actually_worn === false && (
+          <div className="mt-2 pt-2 border-t">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+              <span>Didn&apos;t wear this</span>
+              {outfit.feedback.wore_instead_items && outfit.feedback.wore_instead_items.length > 0 && (
+                <>
+                  <ArrowRight className="h-3 w-3" />
+                  <span className="text-foreground font-medium">Wore instead:</span>
+                </>
+              )}
+            </div>
+            {outfit.feedback.wore_instead_items && outfit.feedback.wore_instead_items.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {outfit.feedback.wore_instead_items.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setPreviewItem(item)}
+                    className="w-14 h-14 rounded-lg bg-muted overflow-hidden relative border hover:ring-2 ring-primary transition-all"
+                    title={item.name || item.type}
+                  >
+                    {item.thumbnail_path ? (
+                      <Image
+                        src={`/api/v1/images/${item.thumbnail_path}`}
+                        alt={item.name || item.type}
+                        fill
+                        className="object-cover"
+                        sizes="56px"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <Shirt className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Details section */}
         {(outfit.reasoning || outfit.style_notes || (outfit.highlights && outfit.highlights.length > 0)) && (
           <div className="mt-2 space-y-2 text-xs flex-1">
@@ -232,7 +282,7 @@ export function OutfitHistoryCard({ outfit, onFeedback, onPreview }: OutfitHisto
             </div>
           )}
 
-          {outfit.status === 'accepted' && (
+          {outfit.status === 'accepted' && outfit.feedback?.actually_worn !== false && (
             <Button
               size="sm"
               variant="outline"
@@ -245,6 +295,35 @@ export function OutfitHistoryCard({ outfit, onFeedback, onPreview }: OutfitHisto
           )}
         </div>
       </CardContent>
+
+      {/* Wore instead item preview modal */}
+      <Dialog open={!!previewItem} onOpenChange={(open) => !open && setPreviewItem(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{previewItem?.name || previewItem?.type || 'Item'}</DialogTitle>
+          </DialogHeader>
+          <div className="flex justify-center">
+            <div className="w-64 h-64 rounded-lg bg-muted overflow-hidden relative">
+              {previewItem?.thumbnail_path ? (
+                <Image
+                  src={`/api/v1/images/${previewItem.thumbnail_path}`}
+                  alt={previewItem.name || previewItem.type}
+                  fill
+                  className="object-cover"
+                  sizes="256px"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <Shirt className="h-16 w-16 text-muted-foreground" />
+                </div>
+              )}
+            </div>
+          </div>
+          <p className="text-center text-sm text-muted-foreground capitalize">
+            {previewItem?.type}
+          </p>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

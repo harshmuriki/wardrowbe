@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { api, setAccessToken } from '@/lib/api';
 
+// Helper to set token if available (for NextAuth mode)
 function useSetTokenIfAvailable() {
   const { data: session } = useSession();
   if (session?.accessToken) {
@@ -22,10 +23,19 @@ export interface OutfitItem {
   position: number;
 }
 
+export interface WoreInsteadItem {
+  id: string;
+  type: string;
+  name: string | null;
+  thumbnail_path: string | null;
+}
+
 export interface FeedbackSummary {
   rating: number | null;
   comment: string | null;
   worn_at: string | null;
+  actually_worn: boolean | null;
+  wore_instead_items: WoreInsteadItem[] | null;
 }
 
 export type OutfitSource = 'scheduled' | 'on_demand' | 'manual' | 'pairing';
@@ -69,6 +79,8 @@ export interface FeedbackData {
   worn?: boolean;
   worn_with_modifications?: boolean;
   modification_notes?: string;
+  actually_worn?: boolean;
+  wore_instead_items?: string[];
 }
 
 export interface FeedbackResponse {
@@ -82,6 +94,8 @@ export interface FeedbackResponse {
   worn_at: string | null;
   worn_with_modifications: boolean;
   modification_notes: string | null;
+  actually_worn: boolean | null;
+  wore_instead_items: string[] | null;
   created_at: string;
 }
 
@@ -181,6 +195,7 @@ export function useCalendarOutfits(year: number, month: number, filters: OutfitF
   const { status } = useSession();
   useSetTokenIfAvailable();
 
+  // Calculate date range for the month
   const date_from = `${year}-${String(month).padStart(2, '0')}-01`;
   const lastDay = new Date(year, month, 0).getDate();
   const date_to = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;

@@ -1,6 +1,8 @@
+"""Notification background workers."""
+
 import logging
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from arq import cron
 from sqlalchemy import and_, select
@@ -8,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import get_settings
+from app.models.learning import UserLearningProfile
 from app.models.notification import Notification, NotificationSettings, NotificationStatus
 from app.models.schedule import Schedule
+from app.services.learning_service import LearningService
 from app.services.notification_service import DeliveryStatus, NotificationDispatcher
 
 logger = logging.getLogger(__name__)
@@ -35,7 +39,9 @@ async def send_notification(ctx: dict, user_id: str, outfit_id: str):
         app_url = os.getenv("APP_URL", "http://localhost:3000")
         dispatcher = NotificationDispatcher(db, app_url)
 
-        results = await dispatcher.send_outfit_notification(user_id=user_id, outfit_id=outfit_id)
+        results = await dispatcher.send_outfit_notification(
+            user_id=user_id, outfit_id=outfit_id
+        )
 
         await db.commit()
 
@@ -48,7 +54,7 @@ async def send_notification(ctx: dict, user_id: str, outfit_id: str):
 
         return {"success": any(r.status == DeliveryStatus.SENT for r in results)}
 
-    except Exception:
+    except Exception as e:
         logger.exception(f"Failed to send notification for outfit {outfit_id}")
         await db.rollback()
         raise
@@ -88,14 +94,14 @@ async def retry_failed_notifications(ctx: dict):
             try:
                 # Increment attempt counter
                 notification.attempts += 1
-                notification.last_attempt_at = datetime.now(UTC)
+                notification.last_attempt_at = datetime.now(timezone.utc)
 
                 # Retry via the existing notification (don't create new records)
                 result = await dispatcher.retry_notification(notification)
 
                 if result.status == DeliveryStatus.SENT:
                     notification.status = NotificationStatus.sent
-                    notification.sent_at = datetime.now(UTC)
+                    notification.sent_at = datetime.now(timezone.utc)
                     retried += 1
                 elif notification.attempts >= notification.max_attempts:
                     notification.status = NotificationStatus.failed
@@ -106,7 +112,9 @@ async def retry_failed_notifications(ctx: dict):
                 await db.commit()
 
             except Exception as e:
-                logger.exception(f"Failed to retry notification {notification.id}: {e}")
+                logger.exception(
+                    f"Failed to retry notification {notification.id}: {e}"
+                )
                 if notification.attempts >= notification.max_attempts:
                     notification.status = NotificationStatus.failed
                     notification.error_message = str(e)
@@ -135,9 +143,8 @@ async def check_scheduled_notifications(ctx: dict):
     - notify_day_before=True: Notify evening before (e.g., Sunday evening for Monday outfit)
     """
     from sqlalchemy.orm import selectinload
-
-    from app.models.outfit import OutfitSource
     from app.models.user import User
+    from app.models.outfit import OutfitSource
     from app.services.recommendation_service import RecommendationService
     from app.services.weather_service import get_weather_service
 
@@ -145,7 +152,7 @@ async def check_scheduled_notifications(ctx: dict):
 
     db = await get_db_session()
     try:
-        now_utc = datetime.now(UTC)
+        now_utc = datetime.now(timezone.utc)
         current_utc_day = now_utc.weekday()
         current_utc_time = now_utc.time()
         tomorrow_utc_day = (current_utc_day + 1) % 7
@@ -156,18 +163,12 @@ async def check_scheduled_notifications(ctx: dict):
         result = await db.execute(
             select(Schedule).where(
                 and_(
-                    Schedule.enabled.is_(True),
+                    Schedule.enabled == True,
                     # Match same-day OR day-before schedules
                     (
-                        (
-                            (Schedule.notify_day_before.is_(False))
-                            & (Schedule.day_of_week == current_utc_day)
-                        )
-                        | (
-                            (Schedule.notify_day_before.is_(True))
-                            & (Schedule.day_of_week == tomorrow_utc_day)
-                        )
-                    ),
+                        ((Schedule.notify_day_before == False) & (Schedule.day_of_week == current_utc_day)) |
+                        ((Schedule.notify_day_before == True) & (Schedule.day_of_week == tomorrow_utc_day))
+                    )
                 )
             )
         )
@@ -182,9 +183,7 @@ async def check_scheduled_notifications(ctx: dict):
         triggered = 0
         for schedule in schedules:
             # Check if current UTC time matches schedule time (within 1 minute)
-            schedule_minutes = (
-                schedule.notification_time.hour * 60 + schedule.notification_time.minute
-            )
+            schedule_minutes = schedule.notification_time.hour * 60 + schedule.notification_time.minute
             current_minutes = current_utc_time.hour * 60 + current_utc_time.minute
 
             if abs(schedule_minutes - current_minutes) > 1:
@@ -216,7 +215,7 @@ async def check_scheduled_notifications(ctx: dict):
                 select(NotificationSettings).where(
                     and_(
                         NotificationSettings.user_id == schedule.user_id,
-                        NotificationSettings.enabled.is_(True),
+                        NotificationSettings.enabled == True,
                     )
                 )
             )
@@ -250,7 +249,7 @@ async def check_scheduled_notifications(ctx: dict):
                 )
 
                 # Send notification (with for_tomorrow flag for messaging)
-                await dispatcher.send_outfit_notification(
+                results = await dispatcher.send_outfit_notification(
                     user_id=str(user.id),
                     outfit_id=str(outfit.id),
                     for_tomorrow=is_for_tomorrow,
@@ -269,7 +268,9 @@ async def check_scheduled_notifications(ctx: dict):
 
             except ValueError as e:
                 # User-facing errors like "no location" or "no items"
-                logger.warning(f"Cannot generate outfit for user {schedule.user_id}: {e}")
+                logger.warning(
+                    f"Cannot generate outfit for user {schedule.user_id}: {e}"
+                )
             except Exception as e:
                 logger.exception(
                     f"Failed to generate/send notification for user {schedule.user_id}: {e}"
@@ -285,16 +286,96 @@ async def check_scheduled_notifications(ctx: dict):
         await db.close()
 
 
+async def update_learning_profiles(ctx: dict):
+    """
+    Periodic job to update learning profiles for users with new feedback.
+
+    This job runs hourly and recomputes learning profiles for users who:
+    1. Have given feedback since their last profile computation
+    2. Have not had their profile computed in the last hour
+
+    The learning system uses Netflix/Spotify-style algorithms to learn user
+    preferences from their feedback history.
+    """
+    logger.info("Starting periodic learning profile updates...")
+
+    db = await get_db_session()
+    try:
+        now = datetime.now(timezone.utc)
+        one_hour_ago = now - timedelta(hours=1)
+
+        # Find users who need profile updates
+        # Query users with learning profiles that are stale or don't exist
+        from app.models.user import User
+        from app.models.outfit import Outfit, OutfitStatus
+
+        # Get users who have given feedback (accepted/rejected outfits) recently
+        result = await db.execute(
+            select(User.id)
+            .join(Outfit, User.id == Outfit.user_id)
+            .where(
+                and_(
+                    Outfit.status.in_([OutfitStatus.accepted, OutfitStatus.rejected]),
+                    Outfit.responded_at >= one_hour_ago,
+                )
+            )
+            .distinct()
+        )
+        users_with_recent_feedback = set(row[0] for row in result.all())
+
+        if not users_with_recent_feedback:
+            logger.info("No users with recent feedback to update")
+            return {"updated": 0}
+
+        learning_service = LearningService(db)
+        updated_count = 0
+
+        for user_id in users_with_recent_feedback:
+            try:
+                # Check if profile needs update (doesn't exist or is stale)
+                profile_result = await db.execute(
+                    select(UserLearningProfile).where(UserLearningProfile.user_id == user_id)
+                )
+                profile = profile_result.scalar_one_or_none()
+
+                needs_update = (
+                    profile is None
+                    or profile.last_computed_at is None
+                    or profile.last_computed_at < one_hour_ago
+                )
+
+                if needs_update:
+                    await learning_service.recompute_learning_profile(user_id)
+                    await learning_service.generate_insights(user_id)
+                    updated_count += 1
+                    logger.info(f"Updated learning profile for user {user_id}")
+
+            except Exception as e:
+                logger.warning(f"Failed to update learning profile for user {user_id}: {e}")
+                continue
+
+        logger.info(f"Completed learning profile updates: {updated_count} profiles updated")
+        return {"updated": updated_count}
+
+    except Exception as e:
+        logger.exception("Error in update_learning_profiles")
+        return {"error": str(e)}
+    finally:
+        await db.close()
+
+
 class WorkerSettings:
     """ARQ worker settings for notification jobs."""
 
-    functions = [send_notification, retry_failed_notifications, check_scheduled_notifications]
+    functions = [send_notification, retry_failed_notifications, check_scheduled_notifications, update_learning_profiles]
 
     cron_jobs = [
         # Retry failed notifications every 5 minutes
         cron(retry_failed_notifications, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         # Check scheduled notifications every minute
         cron(check_scheduled_notifications, minute=None),  # Every minute
+        # Update learning profiles hourly (at minute 30 to avoid overlap with other jobs)
+        cron(update_learning_profiles, minute=30, hour=None),  # Every hour at :30
     ]
 
     # Redis settings are inherited from the main worker settings

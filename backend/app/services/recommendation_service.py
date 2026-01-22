@@ -1,29 +1,44 @@
+"""Outfit recommendation service."""
+
 import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.item import ClothingItem, ItemHistory, ItemStatus
+from app.models.learning import ItemPairScore
 from app.models.outfit import Outfit, OutfitItem, OutfitSource, OutfitStatus
 from app.models.preference import UserPreference
 from app.models.user import User
-from app.services.ai_service import AIService
+from app.services.ai_service import AIService, TextGenerationResult
 from app.services.weather_service import WeatherData, WeatherServiceError, get_weather_service
-from app.utils.timezone import get_user_today
 
 logger = logging.getLogger(__name__)
 
 
+def get_user_today(user: User) -> date:
+    """Get today's date in the user's timezone."""
+    try:
+        user_tz = ZoneInfo(user.timezone or "UTC")
+    except Exception:
+        user_tz = ZoneInfo("UTC")
+    return datetime.now(timezone.utc).astimezone(user_tz).date()
+
+
 @dataclass
 class RecommendationContext:
+    """Context for generating a recommendation."""
+
     user: User
-    preferences: UserPreference | None
+    preferences: Optional[UserPreference]
     weather: WeatherData
     occasion: str
     exclude_items: list[UUID]
@@ -92,7 +107,7 @@ class RecommendationService:
         user: User,
         weather: WeatherData,
         occasion: str,
-        preferences: UserPreference | None,
+        preferences: Optional[UserPreference],
         exclude_items: list[UUID],
     ) -> list[ClothingItem]:
         """
@@ -104,7 +119,7 @@ class RecommendationService:
             and_(
                 ClothingItem.user_id == user.id,
                 ClothingItem.status == ItemStatus.ready,
-                ClothingItem.is_archived.is_(False),
+                ClothingItem.is_archived == False,
             )
         )
 
@@ -125,7 +140,9 @@ class RecommendationService:
 
         # Exclude recently worn items (user preference)
         if preferences and preferences.avoid_repeat_days:
-            items = await self._exclude_recently_worn(items, user, preferences.avoid_repeat_days)
+            items = await self._exclude_recently_worn(
+                items, user, preferences.avoid_repeat_days
+            )
 
         return items
 
@@ -147,7 +164,7 @@ class RecommendationService:
         self,
         items: list[ClothingItem],
         weather: WeatherData,
-        preferences: UserPreference | None,
+        preferences: Optional[UserPreference],
     ) -> list[ClothingItem]:
         """Filter items appropriate for weather conditions."""
         temp = weather.temperature
@@ -198,9 +215,13 @@ class RecommendationService:
 
         return filtered
 
-    def _filter_by_formality(self, items: list[ClothingItem], occasion: str) -> list[ClothingItem]:
+    def _filter_by_formality(
+        self, items: list[ClothingItem], occasion: str
+    ) -> list[ClothingItem]:
         """Filter items by occasion formality."""
-        allowed_formality = OCCASION_FORMALITY.get(occasion.lower(), ["casual", "smart-casual"])
+        allowed_formality = OCCASION_FORMALITY.get(
+            occasion.lower(), ["casual", "smart-casual"]
+        )
 
         filtered = []
         for item in items:
@@ -239,7 +260,9 @@ class RecommendationService:
 
         return [i for i in items if i.id not in recently_worn]
 
-    def _format_items_for_prompt(self, items: list[ClothingItem]) -> tuple[str, dict[int, UUID]]:
+    def _format_items_for_prompt(
+        self, items: list[ClothingItem]
+    ) -> tuple[str, dict[int, UUID]]:
         """
         Format items list for AI prompt using simple numbers.
         Returns (formatted_text, number_to_uuid_mapping).
@@ -292,22 +315,110 @@ class RecommendationService:
 
         return "\n".join(lines), number_map
 
-    def _format_preferences_for_prompt(self, preferences: UserPreference | None) -> str:
-        """Format user preferences for AI prompt."""
-        if not preferences:
-            return ""
-
+    def _format_preferences_for_prompt(
+        self,
+        preferences: Optional[UserPreference],
+        learned_prefs: Optional[dict] = None,
+    ) -> str:
+        """Format user preferences for AI prompt, including learned preferences."""
         lines = []
-        if preferences.color_favorites:
-            lines.append(f"- Favorite colors: {', '.join(preferences.color_favorites)}")
-        if preferences.color_avoid:
-            lines.append(f"- Colors to avoid: {', '.join(preferences.color_avoid)}")
-        if preferences.variety_level:
-            lines.append(f"- Variety preference: {preferences.variety_level}")
+
+        # Explicit user preferences
+        if preferences:
+            if preferences.color_favorites:
+                lines.append(f"- Favorite colors: {', '.join(preferences.color_favorites)}")
+            if preferences.color_avoid:
+                lines.append(f"- Colors to avoid: {', '.join(preferences.color_avoid)}")
+            if preferences.variety_level:
+                lines.append(f"- Variety preference: {preferences.variety_level}")
+
+        # Learned preferences (from feedback history)
+        if learned_prefs:
+            if learned_prefs.get("learned_favorite_colors"):
+                colors = learned_prefs["learned_favorite_colors"]
+                lines.append(f"- Learned favorite colors (from feedback): {', '.join(colors)}")
+            if learned_prefs.get("learned_avoid_colors"):
+                colors = learned_prefs["learned_avoid_colors"]
+                lines.append(f"- Learned colors to avoid (from feedback): {', '.join(colors)}")
+            if learned_prefs.get("learned_preferred_styles"):
+                styles = learned_prefs["learned_preferred_styles"]
+                lines.append(f"- Learned preferred styles: {', '.join(styles)}")
 
         if lines:
             return "\nUSER PREFERENCES:\n" + "\n".join(lines)
         return ""
+
+    async def _get_learned_preferences(self, user_id: UUID) -> dict:
+        """Get learned preferences from the learning profile."""
+        from app.models.learning import UserLearningProfile
+
+        result = await self.db.execute(
+            select(UserLearningProfile).where(UserLearningProfile.user_id == user_id)
+        )
+        profile = result.scalar_one_or_none()
+
+        if not profile or not profile.last_computed_at:
+            return {}
+
+        preferences = {}
+
+        # Top liked colors
+        if profile.learned_color_scores:
+            liked_colors = sorted(
+                [(c, s) for c, s in profile.learned_color_scores.items() if s > 0.2],
+                key=lambda x: x[1],
+                reverse=True,
+            )[:5]
+            disliked_colors = sorted(
+                [(c, s) for c, s in profile.learned_color_scores.items() if s < -0.2],
+                key=lambda x: x[1],
+            )[:3]
+
+            if liked_colors:
+                preferences["learned_favorite_colors"] = [c for c, _ in liked_colors]
+            if disliked_colors:
+                preferences["learned_avoid_colors"] = [c for c, _ in disliked_colors]
+
+        # Top liked styles
+        if profile.learned_style_scores:
+            liked_styles = sorted(
+                [(s, score) for s, score in profile.learned_style_scores.items() if score > 0.2],
+                key=lambda x: x[1],
+                reverse=True,
+            )[:3]
+            if liked_styles:
+                preferences["learned_preferred_styles"] = [s for s, _ in liked_styles]
+
+        return preferences
+
+    async def _get_good_item_pairs(self, user_id: UUID) -> dict[UUID, list[UUID]]:
+        """Get item pairs that work well together for this user."""
+        result = await self.db.execute(
+            select(ItemPairScore)
+            .where(
+                and_(
+                    ItemPairScore.user_id == user_id,
+                    ItemPairScore.compatibility_score > 0.3,
+                    ItemPairScore.times_paired >= 2,
+                )
+            )
+            .order_by(ItemPairScore.compatibility_score.desc())
+            .limit(50)
+        )
+        pairs = list(result.scalars().all())
+
+        # Build adjacency list of good pairs
+        good_pairs: dict[UUID, list[UUID]] = {}
+        for pair in pairs:
+            if pair.item1_id not in good_pairs:
+                good_pairs[pair.item1_id] = []
+            good_pairs[pair.item1_id].append(pair.item2_id)
+
+            if pair.item2_id not in good_pairs:
+                good_pairs[pair.item2_id] = []
+            good_pairs[pair.item2_id].append(pair.item1_id)
+
+        return good_pairs
 
     def _parse_ai_response(self, content: str) -> dict:
         """Parse AI response, handling potential formatting issues."""
@@ -315,9 +426,9 @@ class RecommendationService:
         def strip_comments(json_str: str) -> str:
             """Remove JavaScript-style comments from JSON string."""
             # Remove single-line comments (// ...)
-            json_str = re.sub(r"//[^\n]*", "", json_str)
+            json_str = re.sub(r'//[^\n]*', '', json_str)
             # Remove multi-line comments (/* ... */)
-            json_str = re.sub(r"/\*[\s\S]*?\*/", "", json_str)
+            json_str = re.sub(r'/\*[\s\S]*?\*/', '', json_str)
             return json_str
 
         # Try direct JSON parse
@@ -396,9 +507,9 @@ class RecommendationService:
         self,
         user: User,
         occasion: str,
-        weather_override: WeatherData | None = None,
-        exclude_items: list[UUID] | None = None,
-        include_items: list[UUID] | None = None,
+        weather_override: Optional[WeatherData] = None,
+        exclude_items: Optional[list[UUID]] = None,
+        include_items: Optional[list[UUID]] = None,
         source: OutfitSource = OutfitSource.on_demand,
     ) -> Outfit:
         """
@@ -422,7 +533,9 @@ class RecommendationService:
             weather = weather_override
         else:
             if user.location_lat is None or user.location_lon is None:
-                raise ValueError("User location not set. Please set location in settings.")
+                raise ValueError(
+                    "User location not set. Please set location in settings."
+                )
             try:
                 weather = await self.weather_service.get_current_weather(
                     float(user.location_lat), float(user.location_lon)
@@ -465,7 +578,7 @@ class RecommendationService:
                             ClothingItem.id.in_(missing_ids),
                             ClothingItem.user_id == user.id,
                             ClothingItem.status == ItemStatus.ready,
-                            ClothingItem.is_archived.is_(False),
+                            ClothingItem.is_archived == False,
                         )
                     )
                 )
@@ -479,9 +592,14 @@ class RecommendationService:
                 "Please add more items or adjust filters."
             )
 
+        # Get learned preferences from feedback history
+        learned_prefs = await self._get_learned_preferences(user.id)
+        if learned_prefs:
+            logger.info(f"Using learned preferences for user {user.id}: {list(learned_prefs.keys())}")
+
         # Build prompt with numbered items
         items_text, number_map = self._format_items_for_prompt(candidates)
-        preferences_text = self._format_preferences_for_prompt(preferences)
+        preferences_text = self._format_preferences_for_prompt(preferences, learned_prefs)
 
         prompt = RECOMMENDATION_PROMPT.format(
             occasion=occasion,
@@ -494,15 +612,11 @@ class RecommendationService:
         )
 
         # Generate recommendation using AI
-        logger.info(
-            f"Generating recommendation for user {user.id}, occasion: {occasion}, items: {len(candidates)}"
-        )
+        logger.info(f"Generating recommendation for user {user.id}, occasion: {occasion}, items: {len(candidates)}")
 
         try:
             result = await ai_service.generate_text(prompt, return_metadata=True)
-            logger.info(
-                f"AI recommendation generated (model: {result.model}, endpoint: {result.endpoint})"
-            )
+            logger.info(f"AI recommendation generated (model: {result.model}, endpoint: {result.endpoint})")
             logger.debug(f"AI raw response: {result.content[:500]}")
             outfit_data = self._parse_ai_response(result.content)
             # Handle case where AI returns a list instead of object
@@ -582,6 +696,7 @@ class RecommendationService:
         await self.db.refresh(outfit)
 
         # Load relationships for response
+        from app.models.outfit import UserFeedback
         result = await self.db.execute(
             select(Outfit)
             .where(Outfit.id == outfit.id)

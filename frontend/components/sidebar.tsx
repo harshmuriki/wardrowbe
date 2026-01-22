@@ -9,6 +9,7 @@ import {
   Layers,
   History,
   BarChart3,
+  Brain,
   Settings,
   Users,
   Bell,
@@ -22,6 +23,7 @@ const navigation = [
   { name: 'Pairings', href: '/dashboard/pairings', icon: Layers },
   { name: 'History', href: '/dashboard/history', icon: History },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
+  { name: 'AI Learning', href: '/dashboard/learning', icon: Brain },
 ];
 
 const secondaryNavigation = [

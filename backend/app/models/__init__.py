@@ -1,5 +1,13 @@
+"""Database models."""
+
 from app.models.family import Family, FamilyInvite
 from app.models.item import ClothingItem, ItemHistory
+from app.models.learning import (
+    ItemPairScore,
+    OutfitPerformance,
+    StyleInsight,
+    UserLearningProfile,
+)
 from app.models.notification import Notification, NotificationSettings
 from app.models.outfit import Outfit, OutfitItem, UserFeedback
 from app.models.preference import UserPreference
@@ -11,6 +19,10 @@ __all__ = [
     "FamilyInvite",
     "User",
     "UserPreference",
+    "UserLearningProfile",
+    "ItemPairScore",
+    "OutfitPerformance",
+    "StyleInsight",
     "NotificationSettings",
     "Schedule",
     "ClothingItem",
