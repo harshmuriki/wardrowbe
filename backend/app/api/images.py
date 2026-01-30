@@ -1,3 +1,4 @@
+import re
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +13,8 @@ from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/images", tags=["Images"])
 
+FILENAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp)$")
+
 
 @router.get("/{user_id}/{filename}")
 async def get_image(
@@ -20,10 +23,6 @@ async def get_image(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> FileResponse:
-    """Serve an image file.
-
-    Users can access their own images and images of family members.
-    """
     # Verify user has access to this image
     can_access = str(current_user.id) == user_id
 
@@ -43,6 +42,12 @@ async def get_image(
     image_service = ImageService()
     image_path = image_service.get_image_path(f"{user_id}/{filename}")
 
+    if not image_path.resolve().is_relative_to(image_service.storage_path.resolve()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid path",
+        )
+
     if not image_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -52,5 +57,5 @@ async def get_image(
     return FileResponse(
         path=str(image_path),
         media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=31536000"},
+        headers={"Cache-Control": "private, max-age=31536000"},
     )

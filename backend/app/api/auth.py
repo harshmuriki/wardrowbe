@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
+from app.models.user import User
 from app.schemas.user import UserResponse, UserSyncRequest, UserSyncResponse
 from app.services.user_service import UserEmailConflictError, UserService
+from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
@@ -33,6 +35,12 @@ async def sync_user(
     sync_data: UserSyncRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> UserSyncResponse:
+    """
+    Sync user from OIDC provider.
+
+    Called by frontend after successful OIDC authentication to ensure
+    user exists in local database. Returns a JWT token for API authentication.
+    """
     user_service = UserService(db)
 
     try:
@@ -41,7 +49,7 @@ async def sync_user(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
-        ) from None
+        ) from e
 
     # Generate JWT token for API authentication
     access_token = create_access_token(user.external_id)
@@ -58,16 +66,6 @@ async def sync_user(
 
 @router.get("/session", response_model=UserResponse)
 async def get_session(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    external_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserResponse:
-    user_service = UserService(db)
-    user = await user_service.get_by_external_id(external_id)
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
-    return UserResponse.model_validate(user)
+    return UserResponse.model_validate(current_user)
