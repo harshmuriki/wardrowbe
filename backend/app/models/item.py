@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-class ItemStatus(str, enum.Enum):
+class ItemStatus(enum.StrEnum):
     processing = "processing"
     ready = "ready"
     error = "error"

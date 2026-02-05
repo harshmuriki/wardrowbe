@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from app.models.user import User
 
 
-class OutfitStatus(str, enum.Enum):
+class OutfitStatus(enum.StrEnum):
     """Outfit recommendation status."""
 
     pending = "pending"
@@ -37,7 +37,7 @@ class OutfitStatus(str, enum.Enum):
     expired = "expired"
 
 
-class OutfitSource(str, enum.Enum):
+class OutfitSource(enum.StrEnum):
     """How the outfit was created."""
 
     scheduled = "scheduled"

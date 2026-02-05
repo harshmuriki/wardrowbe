@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy import and_, select
@@ -25,7 +25,7 @@ from app.services.notification_providers import (
 logger = logging.getLogger(__name__)
 
 
-class DeliveryStatus(str, Enum):
+class DeliveryStatus(StrEnum):
     PENDING = "pending"
     SENT = "sent"
     DELIVERED = "delivered"
