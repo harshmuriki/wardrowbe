@@ -23,6 +23,12 @@
   <a href="#contributing">Contributing</a>
 </p>
 
+<p align="center">
+  <a href="https://buymeacoffee.com/anyesh">
+    <img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=☕&slug=anyesh&button_colour=FFDD00&font_colour=000000&font_family=Poppins&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me A Coffee" height="40">
+  </a>
+</p>
+
 
 Self-hosted wardrobe management with AI-powered outfit recommendations. Take photos of your clothes, let AI tag them, and get daily outfit suggestions based on weather and occasion.
 
@@ -71,8 +77,7 @@ Self-hosted wardrobe management with AI-powered outfit recommendations. Take pho
 ```bash
 # Install Ollama from https://ollama.ai
 # Then pull required models:
-ollama pull llava:7b      # Vision model (for analyzing clothing images)
-ollama pull gemma3        # Text model (for outfit recommendations)
+ollama pull gemma3        # Multimodel LLM (for image analysis and outfit recommendations)
 
 # Verify it's running:
 curl http://localhost:11434/api/tags
@@ -95,7 +100,7 @@ cp .env.example .env
 # IMPORTANT: Edit .env and configure AI settings
 # For Ollama (default in .env.example):
 #   AI_BASE_URL=http://host.docker.internal:11434/v1
-#   AI_VISION_MODEL=llava:7b
+#   AI_VISION_MODEL=gemma3:latest
 #   AI_TEXT_MODEL=gemma3:latest
 #
 # For OpenAI, uncomment and set:
@@ -160,8 +165,7 @@ Wardrowbe works with any OpenAI-compatible API. You need two types of models:
 1. Install [Ollama](https://ollama.ai)
 2. Pull models:
    ```bash
-   ollama pull llava:7b       # Vision model (4.7GB) - analyzes images
-   ollama pull gemma3:latest  # Text model (3.4GB) - generates recommendations
+   ollama pull gemma3:latest  # multimodel LLM (3.4GB) - analyze images and generates recommendations
 
    # Alternative text models you can use:
    # ollama pull llama3:latest     # Good all-around model
@@ -173,7 +177,7 @@ Wardrowbe works with any OpenAI-compatible API. You need two types of models:
    ```env
    AI_BASE_URL=http://host.docker.internal:11434/v1
    AI_API_KEY=not-needed
-   AI_VISION_MODEL=llava:7b
+   AI_VISION_MODEL=gemma3:latest
    AI_TEXT_MODEL=gemma3:latest
    ```
 
@@ -375,7 +379,7 @@ curl http://localhost:11434/api/tags
 # Should show your installed models
 
 # 2. Check you have the vision model
-ollama list | grep llava
+ollama list | grep gemma
 
 # 3. Verify .env has correct configuration
 cat .env | grep AI_
@@ -463,7 +467,7 @@ docker compose exec postgres psql -U wardrobe -c "SELECT * FROM pg_stat_activity
 docker compose exec redis redis-cli ping
 
 # If AI analysis is slow:
-# - For Ollama: Use smaller models (llava:7b faster than llava:13b)
+# - For Ollama: Use smaller quantized models
 # - For OpenAI: Check your rate limits
 ```
 
@@ -481,6 +485,12 @@ If you're still stuck:
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Support
+
+If you find wardrowbe useful, consider supporting its development:
+
+<a href="https://buymeacoffee.com/anyesh"><img src="https://img.buymeacoffee.com/button-api/?text=Buy me a coffee&emoji=☕&slug=anyesh&button_colour=FFDD00&font_colour=000000&font_family=Poppins&outline_colour=000000&coffee_colour=ffffff" alt="Buy Me A Coffee" height="40"></a>
 
 ## License
 
