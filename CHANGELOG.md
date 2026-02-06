@@ -8,15 +8,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Signed image URLs for improved security
 
 ### Changed
 
 ### Fixed
+
+## [1.2.0] - 2026-02-06
+
+### Added
+- **Wash Tracking** — Track when items need washing based on wear count
+  - Per-item configurable wash intervals (or smart defaults by clothing type, e.g. jeans every 6 wears, t-shirts every wear)
+  - Visual wash status indicator with progress bar in item detail
+  - "Mark as Washed" button to reset the counter
+  - Full wash history log with method and notes
+  - `needs_wash` filter in the wardrobe to quickly find dirty clothes
+  - Background worker sends consolidated laundry reminder notifications every 6 hours via ntfy
+- **Multi-Image Support** — Upload up to 4 additional photos per clothing item
+  - Image gallery with carousel navigation in item detail dialog
+  - Thumbnail strip for quick image switching
+  - Set any additional image as the new primary image (swaps them)
+  - Add/delete additional images while editing
+- **Family Outfit Ratings** — Rate and comment on family members' outfits
+  - Star rating (1–5) with optional comment
+  - Family Feed page to browse other members' outfits and leave ratings
+  - Ratings displayed on outfit history cards and preview dialogs
+  - Average family rating shown on outfit cards
+  - Family Feed link added to sidebar, mobile nav, and dashboard
+- **Wear Statistics** — Detailed per-item wear analytics
+  - Total wears, days since last worn, average wears per month
+  - Wear-by-month mini bar chart (last 6 months)
+  - Wear-by-day-of-week breakdown
+  - Most common occasion detection
+  - Wear timeline with outfit context (which items were worn together)
+- **Wardrobe Sorting & Filtering** — More control over how items are displayed
+  - Sort by: newest, oldest, recently worn, least recently worn, most/least worn, name A–Z/Z–A
+  - Filter by: needs wash, favorites
+  - Collapsible filter bar with active filter count badge
+  - "Clear filters" button
+- **Improved Item Navigation** — Click items in outfit views to jump to item detail
+  - Outfit suggestion items link to wardrobe detail
+  - Outfit preview dialog items link to wardrobe detail
+  - History card "wore instead" preview links to item detail
+  - Deep-link support via `?item=<id>` URL parameter
+- **Smarter AI Recommendations** — AI avoids suggesting items that need washing and recently worn exact outfit combinations
+- Signed image URLs for improved security
+
+### Changed
+- Wear history endpoint now includes full outfit context (which items were worn together)
+- "Wore instead" items now also update wash tracking counters
+- Item detail dialog redesigned with image gallery, wash status section, and wear history section
+- Forward auth token validation made more lenient (`iat` now optional)
+
+### Fixed
 - Ruff linting errors in auth.py and images.py
 - AccumulatedItem types to match Item interface
-
-### Removed
+- Analytics page item cards now use signed `thumbnail_url` instead of raw path
+- Token decode error handling improved with catch-all for malformed payloads
 
 ## [1.1.0] - 2026-01-30
 
@@ -63,6 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI: Compatible with OpenAI, Ollama, LocalAI, or any OpenAI-compatible API
 - Reverse proxy: Nginx/Caddy configurations included
 
-[Unreleased]: https://github.com/username/wardrowbe/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/username/wardrowbe/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/username/wardrowbe/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/username/wardrowbe/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/username/wardrowbe/releases/tag/v1.0.0

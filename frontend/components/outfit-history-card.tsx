@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { Calendar, Zap, Edit3, ThumbsUp, ThumbsDown, Clock, Eye, Star, ArrowRight, Shirt } from 'lucide-react';
+import Link from 'next/link';
+import { Calendar, Zap, Edit3, ThumbsUp, ThumbsDown, Clock, Eye, Star, ArrowRight, Shirt, Users, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -230,6 +231,20 @@ export function OutfitHistoryCard({ outfit, onFeedback, onPreview }: OutfitHisto
           </div>
         )}
 
+        {/* Family ratings summary */}
+        {outfit.family_rating_count != null && outfit.family_rating_count > 0 && (
+          <div className="mt-2 pt-2 border-t">
+            <div className="flex items-center gap-2 text-xs">
+              <Users className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-muted-foreground">Family:</span>
+              <StarRating rating={Math.round(outfit.family_rating_average ?? 0)} />
+              <span className="text-muted-foreground">
+                ({outfit.family_rating_count})
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Details section */}
         {(outfit.reasoning || outfit.style_notes || (outfit.highlights && outfit.highlights.length > 0)) && (
           <div className="mt-2 space-y-2 text-xs flex-1">
@@ -298,30 +313,40 @@ export function OutfitHistoryCard({ outfit, onFeedback, onPreview }: OutfitHisto
 
       {/* Wore instead item preview modal */}
       <Dialog open={!!previewItem} onOpenChange={(open) => !open && setPreviewItem(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-md p-0 overflow-hidden [&>button]:hidden">
+          <DialogHeader className="p-4 pb-2">
             <DialogTitle>{previewItem?.name || previewItem?.type || 'Item'}</DialogTitle>
           </DialogHeader>
-          <div className="flex justify-center">
-            <div className="w-64 h-64 rounded-lg bg-muted overflow-hidden relative">
-              {previewItem?.thumbnail_url ? (
-                <Image
-                  src={previewItem.thumbnail_url}
-                  alt={previewItem.name || previewItem.type}
-                  fill
-                  className="object-cover"
-                  sizes="256px"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <Shirt className="h-16 w-16 text-muted-foreground" />
-                </div>
-              )}
-            </div>
+          <div className="relative bg-muted">
+            <Link href={`/dashboard/wardrobe?item=${previewItem?.id}`} className="block">
+              <div className="relative aspect-square w-full max-h-[350px]">
+                {previewItem?.thumbnail_url ? (
+                  <Image
+                    src={previewItem.thumbnail_url}
+                    alt={previewItem.name || previewItem.type}
+                    fill
+                    className="object-contain"
+                    sizes="(max-width: 448px) 100vw, 448px"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Shirt className="h-16 w-16 text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+            </Link>
           </div>
-          <p className="text-center text-sm text-muted-foreground capitalize">
-            {previewItem?.type}
-          </p>
+          <div className="p-4 pt-2 space-y-3">
+            <Badge variant="secondary" className="capitalize">
+              {previewItem?.type}
+            </Badge>
+            <Button variant="outline" size="sm" className="w-full h-8 text-xs gap-1.5" asChild>
+              <Link href={`/dashboard/wardrobe?item=${previewItem?.id}`}>
+                <ExternalLink className="h-3 w-3" />
+                View item details
+              </Link>
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
     </Card>

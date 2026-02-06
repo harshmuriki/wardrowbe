@@ -23,6 +23,8 @@ import {
   XCircle,
   Lightbulb,
   ChevronRight,
+  HeartHandshake,
+  Users,
 } from 'lucide-react';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -30,6 +32,7 @@ import { useAnalytics } from '@/lib/hooks/use-analytics';
 import { useWeather } from '@/lib/hooks/use-weather';
 import { usePendingOutfits, useAcceptOutfit, useRejectOutfit } from '@/lib/hooks/use-outfits';
 import { useSchedules, useNotificationSettings } from '@/lib/hooks/use-notifications';
+import { useFamily } from '@/lib/hooks/use-family';
 import { toast } from 'sonner';
 
 function WeatherCard() {
@@ -542,6 +545,43 @@ function InsightsCard() {
   );
 }
 
+function FamilyFeedCard() {
+  const { data: family, isLoading } = useFamily();
+
+  if (isLoading) return null;
+
+  // Don't show if user has no family
+  if (!family) return null;
+
+  const memberCount = family.members.length;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <HeartHandshake className="h-5 w-5" />
+          Family Outfits
+        </CardTitle>
+        <CardDescription>
+          See what your family is wearing and rate their outfits
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Users className="h-4 w-4" />
+          <span>{memberCount} member{memberCount !== 1 ? 's' : ''} in {family.name}</span>
+        </div>
+        <Button asChild className="w-full">
+          <Link href="/dashboard/family/feed">
+            Browse Family Outfits
+            <ChevronRight className="ml-2 h-4 w-4" />
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function QuickActionsCard() {
   return (
     <Card>
@@ -599,6 +639,9 @@ export default function DashboardPage() {
         <QuickActionsCard />
         <InsightsCard />
       </div>
+
+      {/* Family feed card */}
+      <FamilyFeedCard />
     </div>
   );
 }

@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { X, Home, Shirt, Sparkles, Layers, History, BarChart3, Brain, Settings, Users, Bell } from 'lucide-react';
+import { X, Home, Shirt, Sparkles, Layers, History, BarChart3, Brain, Settings, Users, Bell, HeartHandshake } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navigation = [
@@ -12,6 +12,7 @@ const navigation = [
   { name: 'Suggest Outfit', href: '/dashboard/suggest', icon: Sparkles },
   { name: 'Pairings', href: '/dashboard/pairings', icon: Layers },
   { name: 'History', href: '/dashboard/history', icon: History },
+  { name: 'Family Feed', href: '/dashboard/family/feed', icon: HeartHandshake },
   { name: 'Analytics', href: '/dashboard/analytics', icon: BarChart3 },
   { name: 'AI Learning', href: '/dashboard/learning', icon: Brain },
 ];

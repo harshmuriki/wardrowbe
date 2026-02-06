@@ -1,3 +1,5 @@
+// API response types matching backend schemas
+
 export interface ItemTags {
   colors: string[];
   primary_color?: string;
@@ -25,11 +27,8 @@ export interface Item {
   purchase_price?: number;
   favorite: boolean;
   image_path: string;
-  image_url: string;
   thumbnail_path?: string;
-  thumbnail_url?: string;
   medium_path?: string;
-  medium_url?: string;
   tags: ItemTags;
   colors: string[];
   primary_color?: string;
@@ -42,6 +41,12 @@ export interface Item {
   last_suggested_at?: string;
   suggestion_count: number;
   acceptance_count: number;
+  wears_since_wash: number;
+  last_washed_at?: string;
+  wash_interval?: number;
+  needs_wash: boolean;
+  effective_wash_interval: number;
+  additional_images: ItemImage[];
   is_archived: boolean;
   archived_at?: string;
   archive_reason?: string;
@@ -63,8 +68,11 @@ export interface ItemFilter {
   colors?: string[];
   status?: string;
   favorite?: boolean;
+  needs_wash?: boolean;
   is_archived?: boolean;
   search?: string;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
 }
 
 export interface StyleProfile {
@@ -98,6 +106,8 @@ export interface Preferences {
   ai_endpoints: AIEndpoint[];
 }
 
+// Color options for the app
+// Hex values tuned for typical clothing colors, not pure/saturated colors
 export const CLOTHING_COLORS = [
   { name: 'Black', value: 'black', hex: '#1a1a1a' },
   { name: 'Charcoal', value: 'charcoal', hex: '#36454F' },
@@ -123,6 +133,7 @@ export const CLOTHING_COLORS = [
   { name: 'Orange', value: 'orange', hex: '#D2691E' },
 ] as const;
 
+// Clothing types
 export const CLOTHING_TYPES = [
   { label: 'Shirt', value: 'shirt' },
   { label: 'T-Shirt', value: 't-shirt' },
@@ -151,6 +162,7 @@ export const OCCASIONS = [
   { label: 'Outdoor', value: 'outdoor' },
 ] as const;
 
+// Family types
 export interface FamilyMember {
   id: string;
   display_name: string;
@@ -189,6 +201,42 @@ export interface JoinFamilyResponse {
   role: string;
 }
 
+// Multi-image types
+export interface ItemImage {
+  id: string;
+  item_id: string;
+  image_path: string;
+  thumbnail_path?: string;
+  medium_path?: string;
+  position: number;
+  created_at: string;
+  image_url: string;
+  thumbnail_url?: string;
+  medium_url?: string;
+}
+
+// Wash tracking types
+export interface WashHistoryEntry {
+  id: string;
+  item_id: string;
+  washed_at: string;
+  method?: string;
+  notes?: string;
+  created_at: string;
+}
+
+// Family rating types
+export interface FamilyRating {
+  id: string;
+  user_id: string;
+  user_display_name: string;
+  user_avatar_url?: string;
+  rating: number;
+  comment?: string;
+  created_at: string;
+}
+
+// Outfit types
 export interface OutfitItem {
   id: string;
   type: string;
@@ -197,9 +245,7 @@ export interface OutfitItem {
   primary_color?: string;
   colors: string[];
   image_path: string;
-  image_url: string;
   thumbnail_path?: string;
-  thumbnail_url?: string;
   layer_type?: string;
   position: number;
 }
@@ -232,6 +278,9 @@ export interface Outfit {
   weather?: WeatherData;
   items: OutfitItem[];
   feedback?: FeedbackSummary;
+  family_ratings?: FamilyRating[];
+  family_rating_average?: number;
+  family_rating_count?: number;
   created_at: string;
 }
 
@@ -248,6 +297,7 @@ export interface SuggestRequest {
   include_items?: string[];
 }
 
+// Pairing types
 export interface SourceItem {
   id: string;
   type: string;
@@ -255,9 +305,7 @@ export interface SourceItem {
   name?: string;
   primary_color?: string;
   image_path: string;
-  image_url: string;
   thumbnail_path?: string;
-  thumbnail_url?: string;
 }
 
 export interface Pairing extends Outfit {

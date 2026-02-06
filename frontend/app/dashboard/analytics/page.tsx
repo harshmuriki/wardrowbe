@@ -136,10 +136,10 @@ function ColorBar({ color, percentage }: { color: string; percentage: number }) 
   );
 }
 
-function ItemCard({ item }: { item: { id: string; name: string | null; type: string; thumbnail_path: string | null; thumbnail_url?: string | null; image_url?: string | null; wear_count: number } }) {
+function ItemCard({ item }: { item: { id: string; name: string | null; type: string; thumbnail_url: string | null; wear_count: number } }) {
   return (
     <Link
-      href={`/dashboard/wardrobe/${item.id}`}
+      href={`/dashboard/wardrobe?item=${item.id}`}
       className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted transition-colors"
     >
       <div className="w-12 h-12 rounded bg-muted overflow-hidden relative flex-shrink-0">

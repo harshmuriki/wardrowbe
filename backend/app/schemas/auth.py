@@ -6,7 +6,7 @@ from pydantic import BaseModel
 class TokenPayload(BaseModel):
     sub: str  # Subject (external_id from OIDC)
     exp: int  # Expiration timestamp
-    iat: int  # Issued at timestamp
+    iat: int | None = None  # Issued at timestamp (optional for forward auth tokens)
     email: str | None = None
     name: str | None = None
 

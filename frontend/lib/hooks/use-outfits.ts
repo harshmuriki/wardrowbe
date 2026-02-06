@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { api, setAccessToken } from '@/lib/api';
+import { FamilyRating } from '@/lib/types';
 
 // Helper to set token if available (for NextAuth mode)
 function useSetTokenIfAvailable() {
@@ -18,9 +19,9 @@ export interface OutfitItem {
   primary_color: string | null;
   colors: string[];
   image_path: string;
-  image_url: string;
   thumbnail_path: string | null;
-  thumbnail_url: string | null;
+  thumbnail_url?: string;
+  image_url?: string;
   layer_type: string | null;
   position: number;
 }
@@ -30,7 +31,7 @@ export interface WoreInsteadItem {
   type: string;
   name: string | null;
   thumbnail_path: string | null;
-  thumbnail_url: string | null;
+  thumbnail_url?: string;
 }
 
 export interface FeedbackSummary {
@@ -55,6 +56,9 @@ export interface Outfit {
   weather: Record<string, unknown> | null;
   items: OutfitItem[];
   feedback: FeedbackSummary | null;
+  family_ratings: FamilyRating[] | null;
+  family_rating_average: number | null;
+  family_rating_count: number | null;
   created_at: string;
 }
 
@@ -234,5 +238,65 @@ export function usePendingOutfits(limit = 3) {
     queryKey: ['pendingOutfits', limit],
     queryFn: () => api.get<OutfitListResponse>('/outfits', { params }),
     enabled: status !== 'loading',
+  });
+}
+
+// --- Family rating hooks ---
+
+export function useSubmitFamilyRating() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ outfitId, rating, comment }: { outfitId: string; rating: number; comment?: string }) =>
+      api.post<FamilyRating>(`/outfits/${outfitId}/family-rating`, { rating, comment }),
+    onSuccess: (_, { outfitId }) => {
+      queryClient.invalidateQueries({ queryKey: ['outfits'] });
+      queryClient.invalidateQueries({ queryKey: ['outfit', outfitId] });
+      queryClient.invalidateQueries({ queryKey: ['familyRatings', outfitId] });
+      queryClient.invalidateQueries({ queryKey: ['calendarOutfits'] });
+      queryClient.invalidateQueries({ queryKey: ['familyOutfits'] });
+    },
+  });
+}
+
+export function useFamilyRatings(outfitId: string | undefined) {
+  const { status } = useSession();
+  useSetTokenIfAvailable();
+
+  return useQuery({
+    queryKey: ['familyRatings', outfitId],
+    queryFn: () => api.get<FamilyRating[]>(`/outfits/${outfitId}/family-ratings`),
+    enabled: !!outfitId && status !== 'loading',
+  });
+}
+
+export function useDeleteFamilyRating() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (outfitId: string) => api.delete<void>(`/outfits/${outfitId}/family-rating`),
+    onSuccess: (_, outfitId) => {
+      queryClient.invalidateQueries({ queryKey: ['outfits'] });
+      queryClient.invalidateQueries({ queryKey: ['outfit', outfitId] });
+      queryClient.invalidateQueries({ queryKey: ['familyRatings', outfitId] });
+      queryClient.invalidateQueries({ queryKey: ['familyOutfits'] });
+    },
+  });
+}
+
+export function useFamilyOutfits(memberId: string | undefined, page = 1, pageSize = 20) {
+  const { status } = useSession();
+  useSetTokenIfAvailable();
+
+  const params: Record<string, string> = {
+    page: String(page),
+    page_size: String(pageSize),
+    family_member_id: memberId || '',
+  };
+
+  return useQuery({
+    queryKey: ['familyOutfits', memberId, page, pageSize],
+    queryFn: () => api.get<OutfitListResponse>('/outfits', { params }),
+    enabled: !!memberId && status !== 'loading',
   });
 }

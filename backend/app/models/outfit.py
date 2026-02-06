@@ -1,5 +1,3 @@
-"""Outfit and recommendation models."""
-
 import enum
 import uuid
 from datetime import date, datetime
@@ -27,8 +25,6 @@ if TYPE_CHECKING:
 
 
 class OutfitStatus(enum.StrEnum):
-    """Outfit recommendation status."""
-
     pending = "pending"
     sent = "sent"
     viewed = "viewed"
@@ -38,8 +34,6 @@ class OutfitStatus(enum.StrEnum):
 
 
 class OutfitSource(enum.StrEnum):
-    """How the outfit was created."""
-
     scheduled = "scheduled"
     on_demand = "on_demand"
     manual = "manual"
@@ -47,8 +41,6 @@ class OutfitSource(enum.StrEnum):
 
 
 class Outfit(Base):
-    """Generated outfit recommendation."""
-
     __tablename__ = "outfits"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -101,14 +93,15 @@ class Outfit(Base):
     feedback: Mapped[Optional["UserFeedback"]] = relationship(
         "UserFeedback", back_populates="outfit", uselist=False, cascade="all, delete-orphan"
     )
+    family_ratings: Mapped[list["FamilyOutfitRating"]] = relationship(
+        "FamilyOutfitRating", back_populates="outfit", cascade="all, delete-orphan"
+    )
     source_item: Mapped[Optional["ClothingItem"]] = relationship(
         "ClothingItem", foreign_keys=[source_item_id]
     )
 
 
 class OutfitItem(Base):
-    """Junction table linking outfits to clothing items."""
-
     __tablename__ = "outfit_items"
 
     outfit_id: Mapped[uuid.UUID] = mapped_column(
@@ -126,8 +119,6 @@ class OutfitItem(Base):
 
 
 class UserFeedback(Base):
-    """User feedback on outfit recommendations."""
-
     __tablename__ = "user_feedback"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -158,3 +149,27 @@ class UserFeedback(Base):
 
     # Relationship
     outfit: Mapped["Outfit"] = relationship("Outfit", back_populates="feedback")
+
+
+class FamilyOutfitRating(Base):
+    __tablename__ = "family_outfit_ratings"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    outfit_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("outfits.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationships
+    outfit: Mapped["Outfit"] = relationship("Outfit", back_populates="family_ratings")
+    user: Mapped["User"] = relationship("User")

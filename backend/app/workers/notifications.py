@@ -1,5 +1,3 @@
-"""Notification background workers."""
-
 import logging
 import os
 from datetime import UTC, datetime, timedelta
@@ -20,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 async def get_db_session() -> AsyncSession:
-    """Create a database session for workers."""
     settings = get_settings()
     engine = create_async_engine(str(settings.database_url), pool_pre_ping=True)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -28,10 +25,6 @@ async def get_db_session() -> AsyncSession:
 
 
 async def send_notification(ctx: dict, user_id: str, outfit_id: str):
-    """
-    Background job to send a notification for an outfit.
-    Called when an outfit is generated and ready to be sent.
-    """
     logger.info(f"Sending notification for outfit {outfit_id} to user {user_id}")
 
     db = await get_db_session()
@@ -61,10 +54,6 @@ async def send_notification(ctx: dict, user_id: str, outfit_id: str):
 
 
 async def retry_failed_notifications(ctx: dict):
-    """
-    Periodic job to retry failed notifications.
-    Runs every minute via cron.
-    """
     logger.info("Checking for notifications to retry...")
 
     db = await get_db_session()
@@ -128,16 +117,6 @@ async def retry_failed_notifications(ctx: dict):
 
 
 async def check_scheduled_notifications(ctx: dict):
-    """
-    Check if any users have scheduled notifications due now.
-    Runs every minute via cron.
-
-    Schedule times are stored in UTC, so we compare directly against UTC time.
-
-    Supports two modes:
-    - notify_day_before=False: Notify on the same day as the outfit (morning of)
-    - notify_day_before=True: Notify evening before (e.g., Sunday evening for Monday outfit)
-    """
     from sqlalchemy.orm import selectinload
 
     from app.models.outfit import OutfitSource
@@ -160,15 +139,15 @@ async def check_scheduled_notifications(ctx: dict):
         result = await db.execute(
             select(Schedule).where(
                 and_(
-                    Schedule.enabled.is_(True),
+                    Schedule.enabled == True,
                     # Match same-day OR day-before schedules
                     (
                         (
-                            (Schedule.notify_day_before.is_(False))
+                            (Schedule.notify_day_before == False)
                             & (Schedule.day_of_week == current_utc_day)
                         )
                         | (
-                            (Schedule.notify_day_before.is_(True))
+                            (Schedule.notify_day_before == True)
                             & (Schedule.day_of_week == tomorrow_utc_day)
                         )
                     ),
@@ -220,7 +199,7 @@ async def check_scheduled_notifications(ctx: dict):
                 select(NotificationSettings).where(
                     and_(
                         NotificationSettings.user_id == schedule.user_id,
-                        NotificationSettings.enabled.is_(True),
+                        NotificationSettings.enabled == True,
                     )
                 )
             )
@@ -254,7 +233,7 @@ async def check_scheduled_notifications(ctx: dict):
                 )
 
                 # Send notification (with for_tomorrow flag for messaging)
-                _results = await dispatcher.send_outfit_notification(
+                await dispatcher.send_outfit_notification(
                     user_id=str(user.id),
                     outfit_id=str(outfit.id),
                     for_tomorrow=is_for_tomorrow,
@@ -289,17 +268,140 @@ async def check_scheduled_notifications(ctx: dict):
         await db.close()
 
 
+async def check_wash_reminders(ctx: dict):
+    from app.models.item import ClothingItem
+
+    logger.info("Checking wash reminders...")
+
+    db = await get_db_session()
+    try:
+        # Get items that need washing, grouped by user
+        result = await db.execute(
+            select(ClothingItem).where(
+                and_(
+                    ClothingItem.needs_wash == True,  # noqa: E712
+                    ClothingItem.is_archived == False,  # noqa: E712
+                )
+            )
+        )
+        dirty_items = list(result.scalars().all())
+
+        if not dirty_items:
+            logger.info("No items need washing")
+            return {"notified": 0}
+
+        # Group by user
+        user_items: dict[str, list] = {}
+        for item in dirty_items:
+            uid = str(item.user_id)
+            if uid not in user_items:
+                user_items[uid] = []
+            user_items[uid].append(item)
+
+        app_url = os.getenv("APP_URL", "http://localhost:3000")
+        notified = 0
+
+        for user_id, items in user_items.items():
+            try:
+                # Check if user has notification channels
+                channels_result = await db.execute(
+                    select(NotificationSettings).where(
+                        and_(
+                            NotificationSettings.user_id == user_id,
+                            NotificationSettings.enabled == True,  # noqa: E712
+                        )
+                    )
+                )
+                channels = list(channels_result.scalars().all())
+                if not channels:
+                    continue
+
+                # Check deduplication: don't send more than once per day
+                one_day_ago = datetime.now(UTC) - timedelta(days=1)
+                existing = await db.execute(
+                    select(Notification).where(
+                        and_(
+                            Notification.user_id == user_id,
+                            Notification.payload["type"].astext == "wash_reminder",
+                            Notification.created_at >= one_day_ago,
+                        )
+                    )
+                )
+                if existing.scalars().first():
+                    continue
+
+                item_names = [i.name or i.type for i in items[:5]]
+                count = len(items)
+                summary = ", ".join(item_names)
+                if count > 5:
+                    summary += f" and {count - 5} more"
+
+                title = "Laundry Reminder"
+                body = f"{count} item{'s' if count != 1 else ''} need washing: {summary}"
+
+                # Send via first enabled channel
+                sent = False
+                sent_channel = "unknown"
+                for channel in channels:
+                    try:
+                        from app.services.notification_service import (
+                            NtfyConfig,
+                            NtfyNotification,
+                            NtfyProvider,
+                        )
+
+                        if channel.channel == "ntfy":
+                            provider = NtfyProvider(NtfyConfig(**channel.config))
+                            result = await provider.send(
+                                NtfyNotification(
+                                    title=title,
+                                    message=body,
+                                    click=f"{app_url}/dashboard/wardrobe",
+                                    tags=["shirt", "droplet"],
+                                )
+                            )
+                            sent = result.get("success", False)
+                            sent_channel = "ntfy"
+
+                        if sent:
+                            break
+                    except Exception as e:
+                        logger.warning(f"Failed to send wash reminder via {channel.channel}: {e}")
+
+                # Create notification record
+                notification = Notification(
+                    user_id=user_id,
+                    channel=sent_channel,
+                    status=NotificationStatus.sent if sent else NotificationStatus.failed,
+                    payload={
+                        "type": "wash_reminder",
+                        "item_count": count,
+                        "title": title,
+                        "body": body,
+                    },
+                    sent_at=datetime.now(UTC) if sent else None,
+                    error_message=None if sent else "All channels failed",
+                )
+                db.add(notification)
+                await db.commit()
+                if sent:
+                    notified += 1
+
+            except Exception as e:
+                logger.warning(f"Failed to send wash reminder for user {user_id}: {e}")
+                continue
+
+        logger.info(f"Sent wash reminders to {notified} users")
+        return {"notified": notified}
+
+    except Exception as e:
+        logger.exception("Error in check_wash_reminders")
+        return {"error": str(e)}
+    finally:
+        await db.close()
+
+
 async def update_learning_profiles(ctx: dict):
-    """
-    Periodic job to update learning profiles for users with new feedback.
-
-    This job runs hourly and recomputes learning profiles for users who:
-    1. Have given feedback since their last profile computation
-    2. Have not had their profile computed in the last hour
-
-    The learning system uses Netflix/Spotify-style algorithms to learn user
-    preferences from their feedback history.
-    """
     logger.info("Starting periodic learning profile updates...")
 
     db = await get_db_session()
@@ -368,12 +470,11 @@ async def update_learning_profiles(ctx: dict):
 
 
 class WorkerSettings:
-    """ARQ worker settings for notification jobs."""
-
     functions = [
         send_notification,
         retry_failed_notifications,
         check_scheduled_notifications,
+        check_wash_reminders,
         update_learning_profiles,
     ]
 
@@ -382,6 +483,8 @@ class WorkerSettings:
         cron(retry_failed_notifications, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         # Check scheduled notifications every minute
         cron(check_scheduled_notifications, minute=None),  # Every minute
+        # Check wash reminders every 6 hours (at minute 15)
+        cron(check_wash_reminders, minute=15, hour={0, 6, 12, 18}),
         # Update learning profiles hourly (at minute 30 to avoid overlap with other jobs)
         cron(update_learning_profiles, minute=30, hour=None),  # Every hour at :30
     ]

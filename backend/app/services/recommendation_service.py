@@ -1,5 +1,3 @@
-"""Outfit recommendation service."""
-
 import json
 import logging
 import re
@@ -14,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.item import ClothingItem, ItemHistory, ItemStatus
 from app.models.learning import ItemPairScore
-from app.models.outfit import Outfit, OutfitItem, OutfitSource, OutfitStatus
+from app.models.outfit import FamilyOutfitRating, Outfit, OutfitItem, OutfitSource, OutfitStatus
 from app.models.preference import UserPreference
 from app.models.user import User
 from app.services.ai_service import AIService
@@ -24,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_user_today(user: User) -> date:
-    """Get today's date in the user's timezone."""
     try:
         user_tz = ZoneInfo(user.timezone or "UTC")
     except Exception:
@@ -34,8 +31,6 @@ def get_user_today(user: User) -> date:
 
 @dataclass
 class RecommendationContext:
-    """Context for generating a recommendation."""
-
     user: User
     preferences: UserPreference | None
     weather: WeatherData
@@ -95,8 +90,6 @@ Your response must be valid JSON with this structure:
 
 
 class RecommendationService:
-    """Service for generating outfit recommendations."""
-
     def __init__(self, db: AsyncSession):
         self.db = db
         self.weather_service = get_weather_service()
@@ -109,16 +102,12 @@ class RecommendationService:
         preferences: UserPreference | None,
         exclude_items: list[UUID],
     ) -> list[ClothingItem]:
-        """
-        Get all available items for the user.
-        Let the AI make informed decisions with full context.
-        """
         # Get all ready, non-archived items
         query = select(ClothingItem).where(
             and_(
                 ClothingItem.user_id == user.id,
                 ClothingItem.status == ItemStatus.ready,
-                ClothingItem.is_archived.is_(False),
+                ClothingItem.is_archived == False,
             )
         )
 
@@ -127,6 +116,9 @@ class RecommendationService:
 
         if not items:
             return []
+
+        # Exclude items that need washing
+        items = [i for i in items if not i.needs_wash]
 
         # Only exclude explicitly excluded items (user request or preferences)
         if exclude_items:
@@ -144,7 +136,6 @@ class RecommendationService:
         return items
 
     def _filter_by_season(self, items: list[ClothingItem], user: User) -> list[ClothingItem]:
-        """Filter items appropriate for current season (in user's timezone)."""
         user_today = get_user_today(user)
         current_season = MONTH_TO_SEASON[user_today.month]
 
@@ -163,7 +154,6 @@ class RecommendationService:
         weather: WeatherData,
         preferences: UserPreference | None,
     ) -> list[ClothingItem]:
-        """Filter items appropriate for weather conditions."""
         temp = weather.temperature
 
         # Get thresholds from preferences or use defaults
@@ -213,7 +203,6 @@ class RecommendationService:
         return filtered
 
     def _filter_by_formality(self, items: list[ClothingItem], occasion: str) -> list[ClothingItem]:
-        """Filter items by occasion formality."""
         allowed_formality = OCCASION_FORMALITY.get(occasion.lower(), ["casual", "smart-casual"])
 
         filtered = []
@@ -227,7 +216,6 @@ class RecommendationService:
     async def _exclude_recently_worn(
         self, items: list[ClothingItem], user: User, avoid_days: int
     ) -> list[ClothingItem]:
-        """Exclude items worn within avoid_days (based on user's timezone)."""
         if avoid_days <= 0:
             return items
 
@@ -253,12 +241,44 @@ class RecommendationService:
 
         return [i for i in items if i.id not in recently_worn]
 
+    async def _get_recently_worn_outfit_combinations(
+        self, user: User, days: int = 7
+    ) -> set[frozenset[UUID]]:
+        if days <= 0:
+            return set()
+
+        user_today = get_user_today(user)
+        cutoff_date = user_today - timedelta(days=days)
+
+        # Get outfits that were marked as worn in the cutoff period
+        from app.models.outfit import UserFeedback
+
+        query = (
+            select(Outfit)
+            .join(UserFeedback, Outfit.id == UserFeedback.outfit_id)
+            .where(
+                and_(
+                    Outfit.user_id == user.id,
+                    UserFeedback.worn_at >= cutoff_date,
+                )
+            )
+            .options(selectinload(Outfit.items))
+        )
+
+        result = await self.db.execute(query)
+        worn_outfits = list(result.scalars().all())
+
+        # Build set of item combinations
+        combinations = set()
+        for outfit in worn_outfits:
+            item_ids = frozenset(outfit_item.item_id for outfit_item in outfit.items)
+            if len(item_ids) >= 2:  # Only track if it's a real outfit
+                combinations.add(item_ids)
+
+        logger.info(f"Found {len(combinations)} worn outfit combinations in last {days} days")
+        return combinations
+
     def _format_items_for_prompt(self, items: list[ClothingItem]) -> tuple[str, dict[int, UUID]]:
-        """
-        Format items list for AI prompt using simple numbers.
-        Returns (formatted_text, number_to_uuid_mapping).
-        Include all relevant details so AI can make informed decisions.
-        """
         lines = []
         number_map: dict[int, UUID] = {}
 
@@ -310,8 +330,9 @@ class RecommendationService:
         self,
         preferences: UserPreference | None,
         learned_prefs: dict | None = None,
+        worn_combinations: set[frozenset[UUID]] | None = None,
+        number_map: dict[int, UUID] | None = None,
     ) -> str:
-        """Format user preferences for AI prompt, including learned preferences."""
         lines = []
 
         # Explicit user preferences
@@ -335,12 +356,25 @@ class RecommendationService:
                 styles = learned_prefs["learned_preferred_styles"]
                 lines.append(f"- Learned preferred styles: {', '.join(styles)}")
 
+        # Recently worn outfit combinations to deprioritize
+        if worn_combinations and number_map:
+            # Map UUIDs back to item numbers
+            uuid_to_number = {uuid: num for num, uuid in number_map.items()}
+            worn_sets = []
+            for combo in worn_combinations:
+                numbers = sorted([uuid_to_number[uuid] for uuid in combo if uuid in uuid_to_number])
+                if numbers:
+                    worn_sets.append("[" + ", ".join(map(str, numbers)) + "]")
+            if worn_sets:
+                lines.append(
+                    f"- Recently worn outfits (prefer variety, only repeat if necessary): {', '.join(worn_sets)}"
+                )
+
         if lines:
             return "\nUSER PREFERENCES:\n" + "\n".join(lines)
         return ""
 
     async def _get_learned_preferences(self, user_id: UUID) -> dict:
-        """Get learned preferences from the learning profile."""
         from app.models.learning import UserLearningProfile
 
         result = await self.db.execute(
@@ -383,7 +417,6 @@ class RecommendationService:
         return preferences
 
     async def _get_good_item_pairs(self, user_id: UUID) -> dict[UUID, list[UUID]]:
-        """Get item pairs that work well together for this user."""
         result = await self.db.execute(
             select(ItemPairScore)
             .where(
@@ -412,10 +445,7 @@ class RecommendationService:
         return good_pairs
 
     def _parse_ai_response(self, content: str) -> dict:
-        """Parse AI response, handling potential formatting issues."""
-
         def strip_comments(json_str: str) -> str:
-            """Remove JavaScript-style comments from JSON string."""
             # Remove single-line comments (// ...)
             json_str = re.sub(r"//[^\n]*", "", json_str)
             # Remove multi-line comments (/* ... */)
@@ -503,19 +533,6 @@ class RecommendationService:
         include_items: list[UUID] | None = None,
         source: OutfitSource = OutfitSource.on_demand,
     ) -> Outfit:
-        """
-        Generate an outfit recommendation.
-
-        Args:
-            user: The user requesting the recommendation
-            occasion: The occasion (casual, work, formal, etc.)
-            weather_override: Optional manual weather data
-            exclude_items: Item IDs to exclude
-            include_items: Item IDs that must be included
-
-        Returns:
-            Created Outfit object
-        """
         exclude_items = exclude_items or []
         include_items = include_items or []
 
@@ -567,7 +584,7 @@ class RecommendationService:
                             ClothingItem.id.in_(missing_ids),
                             ClothingItem.user_id == user.id,
                             ClothingItem.status == ItemStatus.ready,
-                            ClothingItem.is_archived.is_(False),
+                            ClothingItem.is_archived == False,
                         )
                     )
                 )
@@ -590,7 +607,13 @@ class RecommendationService:
 
         # Build prompt with numbered items
         items_text, number_map = self._format_items_for_prompt(candidates)
-        preferences_text = self._format_preferences_for_prompt(preferences, learned_prefs)
+
+        # Get recently worn outfit combinations to deprioritize
+        worn_combinations = await self._get_recently_worn_outfit_combinations(user, days=7)
+
+        preferences_text = self._format_preferences_for_prompt(
+            preferences, learned_prefs, worn_combinations, number_map
+        )
 
         prompt = RECOMMENDATION_PROMPT.format(
             occasion=occasion,
@@ -697,6 +720,7 @@ class RecommendationService:
             .options(
                 selectinload(Outfit.items).selectinload(OutfitItem.item),
                 selectinload(Outfit.feedback),
+                selectinload(Outfit.family_ratings).selectinload(FamilyOutfitRating.user),
             )
         )
         outfit = result.scalar_one()
@@ -707,12 +731,8 @@ class RecommendationService:
 
 
 class InsufficientWardrobeError(Exception):
-    """Not enough items for recommendation."""
-
     pass
 
 
 class AIRecommendationError(Exception):
-    """AI failed to generate recommendation."""
-
     pass

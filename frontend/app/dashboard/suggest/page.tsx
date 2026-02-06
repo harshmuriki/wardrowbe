@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import {
   Briefcase,
@@ -349,8 +350,9 @@ function OutfitResult({
         <CardContent className="p-4">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {outfit.items.map((item) => (
-              <div
+              <Link
                 key={item.id}
+                href={`/dashboard/wardrobe?item=${item.id}`}
                 className="group relative rounded-xl border overflow-hidden bg-muted/30 hover:shadow-md transition-shadow"
               >
                 <div className="aspect-square relative">
@@ -378,7 +380,7 @@ function OutfitResult({
                     </Badge>
                   )}
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
 

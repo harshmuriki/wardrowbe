@@ -1,5 +1,3 @@
-"""Outfit recommendation API endpoints."""
-
 import logging
 from datetime import UTC, date, datetime
 from typing import Annotated
@@ -13,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.outfit import Outfit, OutfitItem, OutfitStatus, UserFeedback
+from app.models.item import ClothingItem
+from app.models.outfit import FamilyOutfitRating, Outfit, OutfitItem, OutfitStatus, UserFeedback
 from app.models.user import User
 from app.services.learning_service import LearningService
 from app.services.recommendation_service import (
@@ -29,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_user_today(user: User) -> date:
-    """Get today's date in the user's timezone."""
     try:
         user_tz = ZoneInfo(user.timezone or "UTC")
     except Exception:
@@ -42,8 +40,6 @@ router = APIRouter(prefix="/outfits", tags=["Outfits"])
 
 # Request/Response schemas
 class WeatherOverrideRequest(BaseModel):
-    """Manual weather override."""
-
     temperature: float = Field(description="Temperature in Celsius")
     feels_like: float | None = Field(None, description="Feels like temperature")
     condition: str = Field(default="unknown", description="Weather condition")
@@ -52,8 +48,6 @@ class WeatherOverrideRequest(BaseModel):
 
 
 class SuggestRequest(BaseModel):
-    """Request for outfit suggestion."""
-
     occasion: str = Field(default="casual", description="Occasion type")
     weather_override: WeatherOverrideRequest | None = Field(
         None, description="Manual weather override"
@@ -63,8 +57,6 @@ class SuggestRequest(BaseModel):
 
 
 class OutfitItemResponse(BaseModel):
-    """Individual item in an outfit."""
-
     id: UUID
     type: str
     subtype: str | None = None
@@ -79,21 +71,17 @@ class OutfitItemResponse(BaseModel):
     @computed_field
     @property
     def image_url(self) -> str:
-        """Signed URL for the full-size image."""
         return sign_image_url(self.image_path)
 
     @computed_field
     @property
     def thumbnail_url(self) -> str | None:
-        """Signed URL for the thumbnail image."""
         if self.thumbnail_path:
             return sign_image_url(self.thumbnail_path)
         return None
 
 
 class WoreInsteadItem(BaseModel):
-    """Item info for wore_instead display."""
-
     id: UUID
     type: str
     name: str | None = None
@@ -102,15 +90,12 @@ class WoreInsteadItem(BaseModel):
     @computed_field
     @property
     def thumbnail_url(self) -> str | None:
-        """Signed URL for the thumbnail image."""
         if self.thumbnail_path:
             return sign_image_url(self.thumbnail_path)
         return None
 
 
 class FeedbackSummary(BaseModel):
-    """Summary of outfit feedback for list views."""
-
     rating: int | None = None
     comment: str | None = None
     worn_at: date | None = None
@@ -118,9 +103,22 @@ class FeedbackSummary(BaseModel):
     wore_instead_items: list[WoreInsteadItem] | None = None
 
 
-class OutfitResponse(BaseModel):
-    """Outfit recommendation response."""
+class FamilyRatingRequest(BaseModel):
+    rating: int = Field(ge=1, le=5, description="Rating 1-5")
+    comment: str | None = Field(None, max_length=500)
 
+
+class FamilyRatingResponse(BaseModel):
+    id: UUID
+    user_id: UUID
+    user_display_name: str
+    user_avatar_url: str | None = None
+    rating: int
+    comment: str | None = None
+    created_at: datetime
+
+
+class OutfitResponse(BaseModel):
     id: UUID
     occasion: str
     scheduled_for: date
@@ -132,12 +130,13 @@ class OutfitResponse(BaseModel):
     weather: dict | None = None
     items: list[OutfitItemResponse]
     feedback: FeedbackSummary | None = None
+    family_ratings: list[FamilyRatingResponse] | None = None
+    family_rating_average: float | None = None
+    family_rating_count: int | None = None
     created_at: datetime
 
 
 class OutfitListResponse(BaseModel):
-    """Paginated outfit list response."""
-
     outfits: list[OutfitResponse]
     total: int
     page: int
@@ -146,8 +145,6 @@ class OutfitListResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    """Request to submit feedback on an outfit."""
-
     accepted: bool | None = Field(None, description="Whether outfit was accepted")
     rating: int | None = Field(None, ge=1, le=5, description="Overall rating 1-5")
     comfort_rating: int | None = Field(None, ge=1, le=5, description="Comfort rating 1-5")
@@ -167,8 +164,6 @@ class FeedbackRequest(BaseModel):
 
 
 class FeedbackResponse(BaseModel):
-    """Response with feedback details."""
-
     id: UUID
     outfit_id: UUID
     accepted: bool | None = None
@@ -187,10 +182,6 @@ class FeedbackResponse(BaseModel):
 async def fetch_wore_instead_items_map(
     db: AsyncSession, outfits: list[Outfit]
 ) -> dict[str, list[WoreInsteadItem]]:
-    """
-    Batch fetch wore_instead items for multiple outfits.
-    Returns a map of outfit_id -> list of WoreInsteadItem.
-    """
     from app.models.item import ClothingItem
 
     # Collect all wore_instead item IDs across all outfits
@@ -245,14 +236,6 @@ async def fetch_wore_instead_items_map(
 def outfit_to_response(
     outfit: Outfit, wore_instead_items_map: dict[str, list["WoreInsteadItem"]] | None = None
 ) -> OutfitResponse:
-    """
-    Convert Outfit model to response schema.
-
-    Args:
-        outfit: The outfit to convert
-        wore_instead_items_map: Pre-fetched map of outfit_id -> list of WoreInsteadItem.
-                               If None, wore_instead_items will not be included.
-    """
     items = []
     for outfit_item in sorted(outfit.items, key=lambda x: x.position):
         item = outfit_item.item
@@ -292,6 +275,29 @@ def outfit_to_response(
         if raw_highlights and isinstance(raw_highlights, list):
             highlights = raw_highlights
 
+    # Build family ratings if loaded
+    family_ratings_list = None
+    family_rating_average = None
+    family_rating_count = None
+    if hasattr(outfit, "family_ratings") and outfit.family_ratings:
+        family_ratings_list = [
+            FamilyRatingResponse(
+                id=r.id,
+                user_id=r.user_id,
+                user_display_name=r.user.display_name or r.user.email if r.user else "Unknown",
+                user_avatar_url=r.user.avatar_url if r.user else None,
+                rating=r.rating,
+                comment=r.comment,
+                created_at=r.created_at,
+            )
+            for r in outfit.family_ratings
+        ]
+        family_rating_count = len(outfit.family_ratings)
+        if family_rating_count > 0:
+            family_rating_average = (
+                sum(r.rating for r in outfit.family_ratings) / family_rating_count
+            )
+
     return OutfitResponse(
         id=outfit.id,
         occasion=outfit.occasion,
@@ -304,6 +310,9 @@ def outfit_to_response(
         weather=outfit.weather_data,
         items=items,
         feedback=feedback_summary,
+        family_ratings=family_ratings_list,
+        family_rating_average=family_rating_average,
+        family_rating_count=family_rating_count,
         created_at=outfit.created_at,
     )
 
@@ -314,15 +323,6 @@ async def suggest_outfit(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> OutfitResponse:
-    """
-    Generate an outfit recommendation.
-
-    Uses AI to suggest a cohesive outfit based on:
-    - Current weather (or override)
-    - User's wardrobe
-    - User's preferences
-    - Occasion type
-    """
     # Convert weather override to WeatherData if provided
     weather_override = None
     if request.weather_override:
@@ -355,18 +355,18 @@ async def suggest_outfit(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        ) from e
+        ) from None
     except AIRecommendationError as e:
         logger.error(f"AI recommendation error: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),
-        ) from e
+        ) from None
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        ) from e
+        ) from None
 
     # Fetch wore_instead items for this single outfit
     wore_instead_map = await fetch_wore_instead_items_map(db, [outfit])
@@ -383,15 +383,34 @@ async def list_outfits(
     occasion: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    family_member_id: UUID | None = Query(None, description="View a family member's outfits"),
 ) -> OutfitListResponse:
-    """List user's outfit recommendations with filtering."""
+    # Determine whose outfits to fetch
+    target_user_id = current_user.id
+    if family_member_id:
+        # Verify same family
+        if not current_user.family_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You must be in a family to view family member outfits",
+            )
+        member_result = await db.execute(select(User).where(User.id == family_member_id))
+        member = member_result.scalar_one_or_none()
+        if not member or member.family_id != current_user.family_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User is not in your family",
+            )
+        target_user_id = family_member_id
+
     # Build query
     query = (
         select(Outfit)
-        .where(Outfit.user_id == current_user.id)
+        .where(Outfit.user_id == target_user_id)
         .options(
             selectinload(Outfit.items).selectinload(OutfitItem.item),
             selectinload(Outfit.feedback),
+            selectinload(Outfit.family_ratings).selectinload(FamilyOutfitRating.user),
         )
     )
 
@@ -413,7 +432,7 @@ async def list_outfits(
         query = query.where(Outfit.scheduled_for <= date_to)
 
     # Get total count (apply all filters)
-    count_query = select(Outfit.id).where(Outfit.user_id == current_user.id)
+    count_query = select(Outfit.id).where(Outfit.user_id == target_user_id)
     if status_filter:
         try:
             outfit_status = OutfitStatus(status_filter)
@@ -457,13 +476,13 @@ async def get_outfit(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> OutfitResponse:
-    """Get a specific outfit by ID."""
     query = (
         select(Outfit)
         .where(and_(Outfit.id == outfit_id, Outfit.user_id == current_user.id))
         .options(
             selectinload(Outfit.items).selectinload(OutfitItem.item),
             selectinload(Outfit.feedback),
+            selectinload(Outfit.family_ratings).selectinload(FamilyOutfitRating.user),
         )
     )
 
@@ -485,13 +504,13 @@ async def accept_outfit(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> OutfitResponse:
-    """Mark an outfit as accepted."""
     query = (
         select(Outfit)
         .where(and_(Outfit.id == outfit_id, Outfit.user_id == current_user.id))
         .options(
             selectinload(Outfit.items).selectinload(OutfitItem.item),
             selectinload(Outfit.feedback),
+            selectinload(Outfit.family_ratings).selectinload(FamilyOutfitRating.user),
         )
     )
 
@@ -518,13 +537,13 @@ async def reject_outfit(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> OutfitResponse:
-    """Mark an outfit as rejected."""
     query = (
         select(Outfit)
         .where(and_(Outfit.id == outfit_id, Outfit.user_id == current_user.id))
         .options(
             selectinload(Outfit.items).selectinload(OutfitItem.item),
             selectinload(Outfit.feedback),
+            selectinload(Outfit.family_ratings).selectinload(FamilyOutfitRating.user),
         )
     )
 
@@ -551,7 +570,6 @@ async def delete_outfit(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> None:
-    """Delete an outfit."""
     query = select(Outfit).where(and_(Outfit.id == outfit_id, Outfit.user_id == current_user.id))
 
     result = await db.execute(query)
@@ -574,7 +592,6 @@ async def submit_feedback(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedbackResponse:
-    """Submit feedback for an outfit (rating, comments, wear status)."""
     # Get outfit with feedback
     query = (
         select(Outfit)
@@ -616,11 +633,21 @@ async def submit_feedback(
         feedback.comment = request.comment
     if request.worn and not feedback.worn_at:
         # Only increment wear counts if not already marked as worn (idempotency)
+        from app.schemas.item import DEFAULT_WASH_INTERVALS
+
         user_today = get_user_today(current_user)
         feedback.worn_at = user_today
         for outfit_item in outfit.items:
             outfit_item.item.wear_count += 1
             outfit_item.item.last_worn_at = user_today
+            # Update wash tracking
+            outfit_item.item.wears_since_wash += 1
+            effective_interval = (
+                outfit_item.item.wash_interval
+                if outfit_item.item.wash_interval is not None
+                else DEFAULT_WASH_INTERVALS.get(outfit_item.item.type, 3)
+            )
+            outfit_item.item.needs_wash = outfit_item.item.wears_since_wash >= effective_interval
     if request.worn_with_modifications is not None:
         feedback.worn_with_modifications = request.worn_with_modifications
     if request.modification_notes is not None:
@@ -629,6 +656,44 @@ async def submit_feedback(
         feedback.actually_worn = request.actually_worn
     if request.wore_instead_items is not None:
         feedback.wore_instead_items = [str(item_id) for item_id in request.wore_instead_items]
+
+        # Track wash status for "wore instead" items
+        # When user says they wore something else, those items need washing tracking
+        if feedback.wore_instead_items and not feedback.worn_at:
+            # Only process if not already marked worn (avoid double-counting)
+            from app.schemas.item import DEFAULT_WASH_INTERVALS
+
+            user_today = get_user_today(current_user)
+            feedback.worn_at = user_today
+
+            # Get the actual items they wore
+            wore_instead_ids = [UUID(item_id) for item_id in feedback.wore_instead_items]
+            result = await db.execute(
+                select(ClothingItem).where(
+                    and_(
+                        ClothingItem.id.in_(wore_instead_ids),
+                        ClothingItem.user_id == current_user.id,
+                    )
+                )
+            )
+            wore_instead_items = list(result.scalars().all())
+
+            # Update wear tracking for alternative items
+            for item in wore_instead_items:
+                item.wear_count += 1
+                item.last_worn_at = user_today
+                # Update wash tracking
+                item.wears_since_wash += 1
+                effective_interval = (
+                    item.wash_interval
+                    if item.wash_interval is not None
+                    else DEFAULT_WASH_INTERVALS.get(item.type, 3)
+                )
+                item.needs_wash = item.wears_since_wash >= effective_interval
+
+            logger.info(
+                f"Tracked {len(wore_instead_items)} 'wore instead' items for washing/wear stats"
+            )
 
     await db.commit()
     await db.refresh(feedback)
@@ -665,7 +730,6 @@ async def get_feedback(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> FeedbackResponse:
-    """Get feedback for an outfit."""
     query = (
         select(Outfit)
         .where(and_(Outfit.id == outfit_id, Outfit.user_id == current_user.id))
@@ -703,3 +767,139 @@ async def get_feedback(
         wore_instead_items=[UUID(item_id) for item_id in (feedback.wore_instead_items or [])],
         created_at=feedback.created_at,
     )
+
+
+@router.post("/{outfit_id}/family-rating", response_model=FamilyRatingResponse)
+async def submit_family_rating(
+    outfit_id: UUID,
+    request: FamilyRatingRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> FamilyRatingResponse:
+    # Get the outfit
+    result = await db.execute(select(Outfit).where(Outfit.id == outfit_id))
+    outfit = result.scalar_one_or_none()
+
+    if not outfit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outfit not found")
+
+    # Cannot rate your own outfit
+    if outfit.user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot rate your own outfit",
+        )
+
+    # Verify same family
+    if not current_user.family_id or not outfit.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must be in the same family to rate outfits",
+        )
+
+    # Check the outfit owner is in the same family
+    owner_result = await db.execute(select(User).where(User.id == outfit.user_id))
+    owner = owner_result.scalar_one_or_none()
+    if not owner or owner.family_id != current_user.family_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must be in the same family to rate outfits",
+        )
+
+    # Check for existing rating (upsert)
+    existing = await db.execute(
+        select(FamilyOutfitRating).where(
+            and_(
+                FamilyOutfitRating.outfit_id == outfit_id,
+                FamilyOutfitRating.user_id == current_user.id,
+            )
+        )
+    )
+    rating = existing.scalar_one_or_none()
+
+    if rating:
+        rating.rating = request.rating
+        rating.comment = request.comment
+    else:
+        rating = FamilyOutfitRating(
+            outfit_id=outfit_id,
+            user_id=current_user.id,
+            rating=request.rating,
+            comment=request.comment,
+        )
+        db.add(rating)
+
+    await db.flush()
+    await db.refresh(rating)
+
+    return FamilyRatingResponse(
+        id=rating.id,
+        user_id=rating.user_id,
+        user_display_name=current_user.display_name or current_user.email,
+        user_avatar_url=current_user.avatar_url,
+        rating=rating.rating,
+        comment=rating.comment,
+        created_at=rating.created_at,
+    )
+
+
+@router.get("/{outfit_id}/family-ratings", response_model=list[FamilyRatingResponse])
+async def get_family_ratings(
+    outfit_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[FamilyRatingResponse]:
+    # Verify outfit exists and is accessible
+    result = await db.execute(select(Outfit).where(Outfit.id == outfit_id))
+    outfit = result.scalar_one_or_none()
+
+    if not outfit:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outfit not found")
+
+    # Get ratings with user info
+    ratings_result = await db.execute(
+        select(FamilyOutfitRating)
+        .where(FamilyOutfitRating.outfit_id == outfit_id)
+        .options(selectinload(FamilyOutfitRating.user))
+        .order_by(FamilyOutfitRating.created_at.desc())
+    )
+    ratings = list(ratings_result.scalars().all())
+
+    return [
+        FamilyRatingResponse(
+            id=r.id,
+            user_id=r.user_id,
+            user_display_name=r.user.display_name or r.user.email,
+            user_avatar_url=r.user.avatar_url,
+            rating=r.rating,
+            comment=r.comment,
+            created_at=r.created_at,
+        )
+        for r in ratings
+    ]
+
+
+@router.delete("/{outfit_id}/family-rating", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_family_rating(
+    outfit_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    result = await db.execute(
+        select(FamilyOutfitRating).where(
+            and_(
+                FamilyOutfitRating.outfit_id == outfit_id,
+                FamilyOutfitRating.user_id == current_user.id,
+            )
+        )
+    )
+    rating = result.scalar_one_or_none()
+
+    if not rating:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Rating not found",
+        )
+
+    await db.delete(rating)
+    await db.flush()

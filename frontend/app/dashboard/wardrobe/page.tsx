@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import Image from 'next/image';
-import { Plus, Search, Heart, Grid3X3, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Plus, Search, Heart, Grid3X3, Loader2, AlertCircle, RefreshCw, Droplets, ArrowUpDown, SlidersHorizontal, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -25,11 +26,20 @@ import {
 import { AddItemDialog } from '@/components/add-item-dialog';
 import { ItemDetailDialog } from '@/components/item-detail-dialog';
 import { BulkActionToolbar, BulkSelection } from '@/components/bulk-action-toolbar';
-import { useItems, useItemTypes, useReanalyzeItem, useBulkDeleteItems, useBulkReanalyzeItems, BulkOperationParams } from '@/lib/hooks/use-items';
+import { useItems, useItem, useItemTypes, useReanalyzeItem, useBulkDeleteItems, useBulkReanalyzeItems, BulkOperationParams } from '@/lib/hooks/use-items';
 import { CLOTHING_TYPES, CLOTHING_COLORS, Item } from '@/lib/types';
 import { toast } from 'sonner';
 
-// Images now use signed URLs from backend (item.image_url, item.thumbnail_url)
+const SORT_OPTIONS = [
+  { label: 'Newest first', value: 'created_at', order: 'desc' as const },
+  { label: 'Oldest first', value: 'created_at', order: 'asc' as const },
+  { label: 'Recently worn', value: 'last_worn', order: 'desc' as const },
+  { label: 'Least recently worn', value: 'last_worn', order: 'asc' as const },
+  { label: 'Most worn', value: 'wear_count', order: 'desc' as const },
+  { label: 'Least worn', value: 'wear_count', order: 'asc' as const },
+  { label: 'Name A–Z', value: 'name', order: 'asc' as const },
+  { label: 'Name Z–A', value: 'name', order: 'desc' as const },
+] as const;
 
 function ItemCard({
   item,
@@ -91,6 +101,13 @@ function ItemCard({
             <Heart className="h-4 w-4 fill-red-500 text-red-500" />
           </div>
         )}
+        {item.needs_wash && (
+          <div className="absolute bottom-2 right-2 z-10">
+            <div className="bg-amber-500/90 text-white rounded-full p-1" title="Needs washing">
+              <Droplets className="h-3.5 w-3.5" />
+            </div>
+          </div>
+        )}
         {isProcessing && (
           <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2">
             <Loader2 className="h-6 w-6 text-white animate-spin" />
@@ -145,11 +162,27 @@ function ItemCard({
             </TooltipProvider>
           )}
         </div>
-        {item.wear_count > 0 && (
+        {item.last_worn_at ? (
+          <p className={`text-xs mt-1 ${
+            (() => {
+              const days = Math.floor((Date.now() - new Date(item.last_worn_at).getTime()) / 86400000);
+              if (days < 7) return 'text-green-600 dark:text-green-400';
+              if (days <= 30) return 'text-muted-foreground';
+              return 'text-muted-foreground/60';
+            })()
+          }`}>
+            {(() => {
+              const days = Math.floor((Date.now() - new Date(item.last_worn_at).getTime()) / 86400000);
+              if (days === 0) return 'Worn today';
+              if (days === 1) return 'Worn yesterday';
+              return `Worn ${days}d ago`;
+            })()}
+          </p>
+        ) : item.wear_count > 0 ? (
           <p className="text-xs text-muted-foreground mt-1">
             Worn {item.wear_count} time{item.wear_count !== 1 ? 's' : ''}
           </p>
-        )}
+        ) : null}
         {item.ai_confidence !== undefined && item.ai_confidence > 0 && item.status === 'ready' && (
           <p className="text-xs text-muted-foreground mt-1">
             AI confidence: {Math.round(item.ai_confidence * 100)}%
@@ -192,6 +225,8 @@ function EmptyWardrobe({ onAddClick }: { onAddClick: () => void }) {
 }
 
 export default function WardrobePage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selection, setSelection] = useState<BulkSelection>({
     mode: 'none',
@@ -201,13 +236,37 @@ export default function WardrobePage() {
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [sortIndex, setSortIndex] = useState(0);
+  const [needsWash, setNeedsWash] = useState<boolean | undefined>(undefined);
+  const [favoriteFilter, setFavoriteFilter] = useState<boolean | undefined>(undefined);
+  const [showFilters, setShowFilters] = useState(false);
   const [page, setPage] = useState(1);
+
+  // Open item detail dialog from URL param (e.g. ?item=uuid from outfit pages)
+  useEffect(() => {
+    const itemParam = searchParams.get('item');
+    if (itemParam && !detailItemId) {
+      setDetailItemId(itemParam);
+    }
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sortOption = SORT_OPTIONS[sortIndex];
 
   const filters = {
     search: search || undefined,
     type: typeFilter !== 'all' ? typeFilter : undefined,
+    needs_wash: needsWash,
+    favorite: favoriteFilter,
     is_archived: false,
+    sort_by: sortOption.value,
+    sort_order: sortOption.order,
   };
+
+  const activeFilterCount = [
+    needsWash !== undefined,
+    favoriteFilter !== undefined,
+    typeFilter !== 'all',
+  ].filter(Boolean).length;
 
   // Fetch items with automatic polling (faster when items are processing)
   const { data, isLoading, error } = useItems(filters, page, 20);
@@ -219,8 +278,10 @@ export default function WardrobePage() {
   const items = data?.items || [];
   const total = data?.total || 0;
 
-  // Get selected item from items list for detail dialog
-  const detailItem = detailItemId ? items.find((i) => i.id === detailItemId) || null : null;
+  // Get selected item: try from list first, then fetch individually (for deep-link from outfit pages)
+  const listItem = detailItemId ? items.find((i) => i.id === detailItemId) || null : null;
+  const { data: fetchedItem } = useItem(detailItemId && !listItem ? detailItemId : '');
+  const detailItem = listItem || fetchedItem || null;
 
   // Count items being processed or with errors
   const processingCount = items.filter((i) => i.status === 'processing').length;
@@ -229,7 +290,7 @@ export default function WardrobePage() {
   // Clear selection when filters change (but not page - allow cross-page selection)
   useEffect(() => {
     setSelection({ mode: 'none', selectedIds: new Set(), excludedIds: new Set() });
-  }, [search, typeFilter]);
+  }, [search, typeFilter, needsWash, favoriteFilter, sortIndex]);
 
   const handleRetry = (itemId: string) => {
     reanalyze.mutate(itemId);
@@ -284,6 +345,8 @@ export default function WardrobePage() {
         filters: {
           type: typeFilter !== 'all' ? typeFilter : undefined,
           search: search || undefined,
+          needs_wash: needsWash,
+          favorite: favoriteFilter,
           is_archived: false,
         },
       };
@@ -366,38 +429,124 @@ export default function WardrobePage() {
         </Button>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search items..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-            className="pl-9"
-          />
+      <div className="space-y-3">
+        {/* Main row: search + sort + filter toggle */}
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search items..."
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              className="pl-9"
+            />
+          </div>
+          <div className="flex gap-2">
+            <Select
+              value={String(sortIndex)}
+              onValueChange={(v) => {
+                setSortIndex(Number(v));
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-[180px]">
+                <ArrowUpDown className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SORT_OPTIONS.map((opt, i) => (
+                  <SelectItem key={i} value={String(i)}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant={showFilters || activeFilterCount > 0 ? 'default' : 'outline'}
+              size="icon"
+              className="shrink-0 relative"
+              onClick={() => setShowFilters((v) => !v)}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+              {activeFilterCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-primary text-[10px] font-bold text-primary-foreground flex items-center justify-center">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+          </div>
         </div>
-        <Select
-          value={typeFilter}
-          onValueChange={(value) => {
-            setTypeFilter(value);
-            setPage(1);
-          }}
-        >
-          <SelectTrigger className="w-full sm:w-[180px]">
-            <SelectValue placeholder="All types" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All types</SelectItem>
-            {CLOTHING_TYPES.map((t) => (
-              <SelectItem key={t.value} value={t.value}>
-                {t.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+
+        {/* Expandable filter row */}
+        {showFilters && (
+          <div className="flex flex-wrap gap-2 items-center p-3 rounded-lg border bg-muted/30">
+            <Select
+              value={typeFilter}
+              onValueChange={(value) => {
+                setTypeFilter(value);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger className="w-[150px] h-8 text-xs">
+                <SelectValue placeholder="All types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All types</SelectItem>
+                {CLOTHING_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Button
+              variant={needsWash === true ? 'default' : 'outline'}
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={() => {
+                setNeedsWash(needsWash === true ? undefined : true);
+                setPage(1);
+              }}
+            >
+              <Droplets className="h-3.5 w-3.5" />
+              Needs wash
+            </Button>
+
+            <Button
+              variant={favoriteFilter === true ? 'default' : 'outline'}
+              size="sm"
+              className="h-8 text-xs gap-1.5"
+              onClick={() => {
+                setFavoriteFilter(favoriteFilter === true ? undefined : true);
+                setPage(1);
+              }}
+            >
+              <Heart className="h-3.5 w-3.5" />
+              Favorites
+            </Button>
+
+            {activeFilterCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs gap-1 ml-auto"
+                onClick={() => {
+                  setTypeFilter('all');
+                  setNeedsWash(undefined);
+                  setFavoriteFilter(undefined);
+                  setPage(1);
+                }}
+              >
+                <X className="h-3 w-3" />
+                Clear filters
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       {error ? (
@@ -420,7 +569,7 @@ export default function WardrobePage() {
           ))}
         </div>
       ) : items.length === 0 ? (
-        search || typeFilter !== 'all' ? (
+        search || typeFilter !== 'all' || needsWash !== undefined || favoriteFilter !== undefined ? (
           <div className="text-center py-8">
             <p className="text-muted-foreground">
               No items found matching your filters.
@@ -431,6 +580,8 @@ export default function WardrobePage() {
               onClick={() => {
                 setSearch('');
                 setTypeFilter('all');
+                setNeedsWash(undefined);
+                setFavoriteFilter(undefined);
               }}
             >
               Clear Filters
@@ -478,8 +629,16 @@ export default function WardrobePage() {
       <AddItemDialog open={addDialogOpen} onOpenChange={setAddDialogOpen} />
       <ItemDetailDialog
         item={detailItem}
-        open={!!detailItem}
-        onOpenChange={(open) => !open && setDetailItemId(null)}
+        open={!!detailItemId}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDetailItemId(null);
+            // Clear the ?item= param from URL without navigation
+            if (searchParams.has('item')) {
+              router.replace('/dashboard/wardrobe', { scroll: false });
+            }
+          }
+        }}
       />
     </div>
   );

@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Literal
+from typing import Annotated
 from uuid import UUID
 
 from arq import create_pool
@@ -19,10 +19,14 @@ from app.schemas.item import (
     BulkUploadResult,
     ItemCreate,
     ItemFilter,
+    ItemImageResponse,
     ItemListResponse,
     ItemResponse,
     ItemUpdate,
+    LogWashRequest,
     LogWearRequest,
+    ReorderImagesRequest,
+    WashHistoryResponse,
 )
 from app.services.image_service import ImageService
 from app.services.item_service import ItemService
@@ -46,10 +50,12 @@ async def list_items(
     colors: str | None = None,
     status: str | None = None,
     favorite: bool | None = None,
+    needs_wash: bool | None = None,
     is_archived: bool = False,
     search: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
 ) -> ItemListResponse:
-    # Parse colors from comma-separated string
     color_list = colors.split(",") if colors else None
 
     filters = ItemFilter(
@@ -58,8 +64,11 @@ async def list_items(
         colors=color_list,
         status=status,
         favorite=favorite,
+        needs_wash=needs_wash,
         is_archived=is_archived,
         search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
     item_service = ItemService(db)
@@ -182,12 +191,6 @@ async def bulk_create_items(
     current_user: Annotated[User, Depends(get_current_user)],
     images: list[UploadFile] = File(..., description="Multiple image files to upload"),
 ) -> BulkUploadResponse:
-    """
-    Upload multiple clothing items at once.
-
-    All items will be created with type 'unknown' and will be auto-tagged by AI.
-    Returns results for each file with success/failure status.
-    """
     # if len(images) > 20:
     #     raise HTTPException(
     #         status_code=status.HTTP_400_BAD_REQUEST,
@@ -328,17 +331,6 @@ async def bulk_delete_items(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> BulkDeleteResponse:
-    """
-    Delete multiple items at once.
-
-    Supports two modes:
-    - Explicit: provide item_ids list
-    - Select all: set select_all=True with optional excluded_ids and filters
-
-    - Verifies ownership for each item
-    - Deletes images and item records
-    - Returns count of deleted and failed items
-    """
     item_service = ItemService(db)
     image_service = ImageService()
     deleted = 0
@@ -394,18 +386,6 @@ async def bulk_analyze_items(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> BulkAnalyzeResponse:
-    """
-    Queue AI analysis for multiple items.
-
-    Supports two modes:
-    - Explicit: provide item_ids list
-    - Select all: set select_all=True with optional excluded_ids and filters
-
-    - Verifies ownership for each item
-    - Sets status to 'processing'
-    - Queues AI tagging jobs
-    - Returns count of queued and failed items
-    """
     from app.models.item import ItemStatus
 
     item_service = ItemService(db)
@@ -642,6 +622,12 @@ async def get_item_history(
     current_user: Annotated[User, Depends(get_current_user)],
     limit: int = Query(10, ge=1, le=100),
 ) -> list[dict]:
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import selectinload
+
+    from app.models.item import ItemHistory
+    from app.models.outfit import Outfit, OutfitItem
+
     item_service = ItemService(db)
     item = await item_service.get_by_id(item_id, current_user.id)
 
@@ -651,16 +637,114 @@ async def get_item_history(
             detail="Item not found",
         )
 
-    history = await item_service.get_wear_history(item_id, limit)
-    return [
-        {
+    # Eagerly load outfit and its items for context
+    result = await db.execute(
+        sa_select(ItemHistory)
+        .where(ItemHistory.item_id == item_id)
+        .options(
+            selectinload(ItemHistory.outfit)
+            .selectinload(Outfit.items)
+            .selectinload(OutfitItem.item)
+        )
+        .order_by(ItemHistory.worn_at.desc())
+        .limit(limit)
+    )
+    history = list(result.scalars().all())
+
+    entries = []
+    for h in history:
+        entry = {
             "id": str(h.id),
             "worn_at": h.worn_at.isoformat(),
             "occasion": h.occasion,
             "notes": h.notes,
         }
-        for h in history
-    ]
+        if h.outfit:
+            from app.utils.signed_urls import sign_image_url
+
+            entry["outfit"] = {
+                "id": str(h.outfit.id),
+                "occasion": h.outfit.occasion,
+                "items": [
+                    {
+                        "id": str(oi.item.id),
+                        "type": oi.item.type,
+                        "name": oi.item.name,
+                        "thumbnail_url": sign_image_url(oi.item.thumbnail_path)
+                        if oi.item.thumbnail_path
+                        else None,
+                    }
+                    for oi in sorted(h.outfit.items, key=lambda x: x.position)
+                ],
+            }
+        entries.append(entry)
+
+    return entries
+
+
+@router.get("/{item_id}/wear-stats")
+async def get_item_wear_stats(
+    item_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    item_service = ItemService(db)
+    item = await item_service.get_by_id(item_id, current_user.id)
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found",
+        )
+
+    return await item_service.get_wear_stats(item)
+
+
+@router.post("/{item_id}/wash", response_model=ItemResponse)
+async def log_item_wash(
+    item_id: UUID,
+    request: LogWashRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ItemResponse:
+    item_service = ItemService(db)
+    item = await item_service.get_by_id(item_id, current_user.id)
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found",
+        )
+
+    await item_service.log_wash(
+        item=item,
+        washed_at=request.washed_at,
+        method=request.method,
+        notes=request.notes,
+    )
+
+    await db.refresh(item)
+    return ItemResponse.model_validate(item)
+
+
+@router.get("/{item_id}/wash-history", response_model=list[WashHistoryResponse])
+async def get_item_wash_history(
+    item_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    limit: int = Query(10, ge=1, le=100),
+) -> list[WashHistoryResponse]:
+    item_service = ItemService(db)
+    item = await item_service.get_by_id(item_id, current_user.id)
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found",
+        )
+
+    history = await item_service.get_wash_history(item_id, limit)
+    return [WashHistoryResponse.model_validate(h) for h in history]
 
 
 @router.post("/{item_id}/analyze", response_model=dict)
@@ -711,8 +795,10 @@ async def rotate_item_image(
     item_id: UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
-    direction: Literal["cw", "ccw"] = Query(
-        "cw", description="Rotation direction: cw (clockwise) or ccw (counter-clockwise)"
+    direction: str = Query(
+        "cw",
+        regex="^(cw|ccw)$",
+        description="Rotation direction: cw (clockwise) or ccw (counter-clockwise)",
     ),
 ) -> ItemResponse:
     item_service = ItemService(db)
@@ -747,3 +833,201 @@ async def rotate_item_image(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to rotate image",
         ) from None
+
+
+@router.post(
+    "/{item_id}/images", response_model=ItemImageResponse, status_code=status.HTTP_201_CREATED
+)
+async def add_item_image(
+    item_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    image: UploadFile = File(...),
+) -> ItemImageResponse:
+    from app.models.item import ItemImage
+
+    item_service = ItemService(db)
+    item = await item_service.get_by_id(item_id, current_user.id)
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found",
+        )
+
+    # Check max images limit
+    from sqlalchemy import func, select
+
+    count_result = await db.execute(select(func.count()).where(ItemImage.item_id == item_id))
+    current_count = count_result.scalar() or 0
+    if current_count >= 4:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum of 4 additional images per item",
+        )
+
+    # Process image
+    image_service_inst = ImageService()
+    content = await image.read()
+    content_type = image.content_type or "application/octet-stream"
+
+    if not image_service_inst.validate_image(content, content_type):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid image file. Supported formats: JPEG, PNG, WebP, HEIC",
+        )
+
+    try:
+        image_paths = await image_service_inst.process_and_store(
+            user_id=current_user.id,
+            image_data=content,
+            original_filename=image.filename or "upload.jpg",
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from None
+
+    item_image = ItemImage(
+        item_id=item_id,
+        image_path=image_paths["image_path"],
+        thumbnail_path=image_paths.get("thumbnail_path"),
+        medium_path=image_paths.get("medium_path"),
+        position=current_count,
+    )
+    db.add(item_image)
+    await db.flush()
+    await db.refresh(item_image)
+
+    return ItemImageResponse.model_validate(item_image)
+
+
+@router.delete("/{item_id}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_item_image(
+    item_id: UUID,
+    image_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    from sqlalchemy import select
+
+    from app.models.item import ItemImage
+
+    item_service = ItemService(db)
+    item = await item_service.get_by_id(item_id, current_user.id)
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found",
+        )
+
+    result = await db.execute(
+        select(ItemImage).where(ItemImage.id == image_id, ItemImage.item_id == item_id)
+    )
+    item_image = result.scalar_one_or_none()
+
+    if not item_image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found",
+        )
+
+    # Delete image files
+    image_service_inst = ImageService()
+    image_service_inst.delete_images(
+        {
+            "image_path": item_image.image_path,
+            "medium_path": item_image.medium_path,
+            "thumbnail_path": item_image.thumbnail_path,
+        }
+    )
+
+    await db.delete(item_image)
+    await db.flush()
+
+
+@router.patch("/{item_id}/images/reorder", response_model=list[ItemImageResponse])
+async def reorder_item_images(
+    item_id: UUID,
+    request: ReorderImagesRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> list[ItemImageResponse]:
+    from sqlalchemy import select
+
+    from app.models.item import ItemImage
+
+    item_service = ItemService(db)
+    item = await item_service.get_by_id(item_id, current_user.id)
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found",
+        )
+
+    result = await db.execute(select(ItemImage).where(ItemImage.item_id == item_id))
+    images = {img.id: img for img in result.scalars().all()}
+
+    for position, img_id in enumerate(request.image_ids):
+        if img_id in images:
+            images[img_id].position = position
+
+    await db.flush()
+
+    # Return in new order
+    ordered = sorted(images.values(), key=lambda x: x.position)
+    return [ItemImageResponse.model_validate(img) for img in ordered]
+
+
+@router.post("/{item_id}/images/{image_id}/set-primary", response_model=ItemResponse)
+async def set_primary_image(
+    item_id: UUID,
+    image_id: UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> ItemResponse:
+    from sqlalchemy import select
+
+    from app.models.item import ItemImage
+
+    item_service = ItemService(db)
+    item = await item_service.get_by_id(item_id, current_user.id)
+
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Item not found",
+        )
+
+    result = await db.execute(
+        select(ItemImage).where(ItemImage.id == image_id, ItemImage.item_id == item_id)
+    )
+    item_image = result.scalar_one_or_none()
+
+    if not item_image:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Image not found",
+        )
+
+    # Swap paths: current primary -> additional, additional -> primary
+    old_primary = {
+        "image_path": item.image_path,
+        "thumbnail_path": item.thumbnail_path,
+        "medium_path": item.medium_path,
+    }
+
+    item.image_path = item_image.image_path
+    item.thumbnail_path = item_image.thumbnail_path
+    item.medium_path = item_image.medium_path
+
+    item_image.image_path = old_primary["image_path"]
+    item_image.thumbnail_path = old_primary["thumbnail_path"]
+    item_image.medium_path = old_primary["medium_path"]
+
+    await db.flush()
+    await db.refresh(item)
+    return ItemResponse.model_validate(item)

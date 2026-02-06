@@ -1,11 +1,13 @@
-from datetime import UTC, date, datetime
+from collections import Counter
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.item import ClothingItem, ItemHistory, ItemStatus
-from app.schemas.item import ItemCreate, ItemFilter, ItemUpdate
+from app.models.item import ClothingItem, ItemHistory, ItemStatus, WashHistory
+from app.schemas.item import DEFAULT_WASH_INTERVALS, ItemCreate, ItemFilter, ItemUpdate
 
 
 class ItemService:
@@ -14,9 +16,9 @@ class ItemService:
 
     async def get_by_id(self, item_id: UUID, user_id: UUID) -> ClothingItem | None:
         result = await self.db.execute(
-            select(ClothingItem).where(
-                and_(ClothingItem.id == item_id, ClothingItem.user_id == user_id)
-            )
+            select(ClothingItem)
+            .where(and_(ClothingItem.id == item_id, ClothingItem.user_id == user_id))
+            .options(selectinload(ClothingItem.additional_images))
         )
         return result.scalar_one_or_none()
 
@@ -28,7 +30,11 @@ class ItemService:
         page_size: int = 20,
     ) -> tuple[list[ClothingItem], int]:
         # Base query
-        query = select(ClothingItem).where(ClothingItem.user_id == user_id)
+        query = (
+            select(ClothingItem)
+            .where(ClothingItem.user_id == user_id)
+            .options(selectinload(ClothingItem.additional_images))
+        )
 
         # Apply filters
         if filters.type:
@@ -44,6 +50,10 @@ class ItemService:
 
         # Archive filter
         query = query.where(ClothingItem.is_archived == filters.is_archived)
+
+        # Needs wash filter
+        if filters.needs_wash is not None:
+            query = query.where(ClothingItem.needs_wash == filters.needs_wash)
 
         # Search filter
         if filters.search:
@@ -62,8 +72,19 @@ class ItemService:
         total_result = await self.db.execute(count_query)
         total = total_result.scalar() or 0
 
-        # Apply pagination and ordering
-        query = query.order_by(ClothingItem.created_at.desc())
+        # Sorting
+        sort_columns = {
+            "created_at": ClothingItem.created_at,
+            "last_worn": ClothingItem.last_worn_at,
+            "wear_count": ClothingItem.wear_count,
+            "name": ClothingItem.name,
+            "type": ClothingItem.type,
+        }
+        sort_col = sort_columns.get(filters.sort_by or "", ClothingItem.created_at)
+        if filters.sort_order == "asc":
+            query = query.order_by(sort_col.asc().nulls_last())
+        else:
+            query = query.order_by(sort_col.desc().nulls_last())
         query = query.offset((page - 1) * page_size).limit(page_size)
 
         result = await self.db.execute(query)
@@ -109,20 +130,13 @@ class ItemService:
         image_hash: str,
         threshold: int = 8,
     ) -> ClothingItem | None:
-        """
-        Find an existing item with a similar image hash.
-
-        Uses exact match for now. For fuzzy matching with Hamming distance,
-        we would need to load all hashes and compare - expensive for large wardrobes.
-        Exact match catches identical/near-identical uploads.
-        """
         # For exact duplicate detection (same hash)
         result = await self.db.execute(
             select(ClothingItem).where(
                 and_(
                     ClothingItem.user_id == user_id,
                     ClothingItem.image_hash == image_hash,
-                    ClothingItem.is_archived.is_(False),
+                    ClothingItem.is_archived == False,
                 )
             )
         )
@@ -227,9 +241,55 @@ class ItemService:
         item.wear_count += 1
         item.last_worn_at = worn_at
 
+        # Update wash tracking
+        item.wears_since_wash += 1
+        effective_interval = (
+            item.wash_interval
+            if item.wash_interval is not None
+            else DEFAULT_WASH_INTERVALS.get(item.type, 3)
+        )
+        item.needs_wash = item.wears_since_wash >= effective_interval
+
         await self.db.flush()
         await self.db.refresh(history)
         return history
+
+    async def log_wash(
+        self,
+        item: ClothingItem,
+        washed_at: date,
+        method: str | None = None,
+        notes: str | None = None,
+    ) -> WashHistory:
+        wash = WashHistory(
+            item_id=item.id,
+            washed_at=washed_at,
+            method=method,
+            notes=notes,
+        )
+        self.db.add(wash)
+
+        # Reset wash tracking
+        item.wears_since_wash = 0
+        item.last_washed_at = washed_at
+        item.needs_wash = False
+
+        await self.db.flush()
+        await self.db.refresh(wash)
+        return wash
+
+    async def get_wash_history(
+        self,
+        item_id: UUID,
+        limit: int = 10,
+    ) -> list[WashHistory]:
+        result = await self.db.execute(
+            select(WashHistory)
+            .where(WashHistory.item_id == item_id)
+            .order_by(WashHistory.washed_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     async def get_wear_history(
         self,
@@ -243,6 +303,55 @@ class ItemService:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def get_wear_stats(self, item: ClothingItem) -> dict:
+        # Days since last worn
+        days_since_last_worn = None
+        if item.last_worn_at:
+            days_since_last_worn = (date.today() - item.last_worn_at).days
+
+        # Get all wear history for this item
+        result = await self.db.execute(
+            select(ItemHistory)
+            .where(ItemHistory.item_id == item.id)
+            .order_by(ItemHistory.worn_at.desc())
+        )
+        history = list(result.scalars().all())
+
+        # Average wears per month (over last 6 months)
+        six_months_ago = date.today() - timedelta(days=180)
+        recent_wears = [h for h in history if h.worn_at >= six_months_ago]
+        avg_per_month = round(len(recent_wears) / 6, 1) if recent_wears else 0
+
+        # Wear by month (last 6 months)
+        wear_by_month: dict[str, int] = {}
+        for i in range(5, -1, -1):
+            d = date.today() - timedelta(days=30 * i)
+            key = d.strftime("%Y-%m")
+            wear_by_month[key] = 0
+        for h in recent_wears:
+            key = h.worn_at.strftime("%Y-%m")
+            if key in wear_by_month:
+                wear_by_month[key] += 1
+
+        # Wear by day of week
+        day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        wear_by_day = dict.fromkeys(day_names, 0)
+        for h in history:
+            wear_by_day[day_names[h.worn_at.weekday()]] += 1
+
+        # Most common occasion
+        occasions = [h.occasion for h in history if h.occasion]
+        most_common_occasion = Counter(occasions).most_common(1)[0][0] if occasions else None
+
+        return {
+            "total_wears": item.wear_count,
+            "days_since_last_worn": days_since_last_worn,
+            "average_wears_per_month": avg_per_month,
+            "wear_by_month": wear_by_month,
+            "wear_by_day_of_week": wear_by_day,
+            "most_common_occasion": most_common_occasion,
+        }
 
     async def get_item_types(self, user_id: UUID) -> list[dict]:
         result = await self.db.execute(

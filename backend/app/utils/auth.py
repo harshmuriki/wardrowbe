@@ -23,13 +23,6 @@ REMOTE_NAME_HEADER = "Remote-Name"
 
 
 def decode_token(token: str) -> TokenPayload:
-    """
-    Decode and validate JWT token.
-
-    Note: In production with Authentik, you would validate against
-    the OIDC provider's public keys (JWKS). For simplicity, we're
-    using a shared secret here.
-    """
     try:
         payload = jwt.decode(
             token,
@@ -41,7 +34,13 @@ def decode_token(token: str) -> TokenPayload:
     except JWTError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}",
+            detail=f"Invalid token: {e!s}",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token payload: {e!s}",
             headers={"WWW-Authenticate": "Bearer"},
         ) from None
 
@@ -50,10 +49,6 @@ async def get_current_user_optional(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User | None:
-    """
-    Get current user from JWT token if provided.
-    Returns None if no token or invalid token.
-    """
     if not credentials:
         return None
 
@@ -70,15 +65,6 @@ async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """
-    Get current authenticated user.
-
-    Supports two authentication methods:
-    1. Forward auth headers (TinyAuth, Authelia, etc.) - Remote-User header
-    2. JWT Bearer token
-
-    Forward auth headers take precedence when AUTH_TRUST_HEADER is enabled.
-    """
     user_service = UserService(db)
     user = None
 
@@ -133,7 +119,6 @@ async def get_current_user(
 async def get_current_session(
     user: Annotated[User, Depends(get_current_user)],
 ) -> AuthSession:
-    """Get current auth session from authenticated user."""
     return AuthSession(
         user_id=user.id,
         external_id=user.external_id,
@@ -148,3 +133,4 @@ async def get_current_session(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentUserOptional = Annotated[User | None, Depends(get_current_user_optional)]
 CurrentSession = Annotated[AuthSession, Depends(get_current_session)]
+WriteUser = CurrentUser

@@ -16,6 +16,8 @@ import {
   Mail,
   Clock,
   Shield,
+  Star,
+  Shirt,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,6 +55,7 @@ import {
   useRemoveMember,
   useUpdateFamily,
 } from '@/lib/hooks/use-family';
+import Link from 'next/link';
 
 function NoFamilyView() {
   const [mode, setMode] = useState<'create' | 'join' | null>(null);
@@ -547,6 +550,25 @@ function FamilyView() {
           </CardContent>
         </Card>
       )}
+
+      {/* Family Outfits Feed */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Shirt className="h-5 w-5" />
+            Family Outfits
+          </CardTitle>
+          <CardDescription>Browse and rate your family members&apos; outfits</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild className="w-full">
+            <Link href="/dashboard/family/feed">
+              <Star className="mr-2 h-4 w-4" />
+              Open Family Feed
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

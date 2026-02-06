@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, X, RotateCcw, RotateCw, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { useSession } from 'next-auth/react';
+import { ChevronLeft, ChevronRight, X, RotateCcw, RotateCw, Loader2, Users, Star, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -9,7 +11,9 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { type Outfit } from '@/lib/hooks/use-outfits';
+import { useFamily } from '@/lib/hooks/use-family';
 import { useRotateImage } from '@/lib/hooks/use-items';
+import { FamilyRatingForm, FamilyRatingsDisplay } from '@/components/family-ratings';
 import { toast } from 'sonner';
 import Image from 'next/image';
 
@@ -22,8 +26,17 @@ interface OutfitPreviewDialogProps {
 export function OutfitPreviewDialog({ outfit, open, onClose }: OutfitPreviewDialogProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [imageKey, setImageKey] = useState(0); // Force image reload after rotation
+  const [showRatingForm, setShowRatingForm] = useState(false);
   const items = outfit.items;
   const rotateImage = useRotateImage();
+  const { data: session } = useSession();
+  const { data: family } = useFamily();
+
+  // Determine if current user can rate (is a family member but not outfit owner)
+  const currentEmail = session?.user?.email;
+  const currentMember = family?.members.find((m) => m.email === currentEmail);
+  const isInFamily = !!family && !!currentMember;
+  const myRating = outfit.family_ratings?.find((r) => r.user_id === currentMember?.id);
 
   const currentItem = items[currentIndex];
 
@@ -67,24 +80,26 @@ export function OutfitPreviewDialog({ outfit, open, onClose }: OutfitPreviewDial
         <div className="flex-1 overflow-y-auto overscroll-contain">
           {/* Main image area */}
           <div className="relative bg-muted">
-            {/* Image - smaller on mobile */}
-            <div className="relative aspect-square w-full max-h-[280px] sm:max-h-[350px]">
-              {currentItem.image_url ? (
-                <Image
-                  key={`${currentItem.id}-${imageKey}`}
-                  src={currentItem.image_url}
-                  alt={currentItem.name || currentItem.type}
-                  fill
-                  className="object-contain"
-                  sizes="(max-width: 512px) 100vw, 512px"
-                  priority
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                  No image
-                </div>
-              )}
-            </div>
+            <Link href={`/dashboard/wardrobe?item=${currentItem.id}`} className="block">
+              {/* Image - smaller on mobile */}
+              <div className="relative aspect-square w-full max-h-[280px] sm:max-h-[350px]">
+                {currentItem.image_url ? (
+                  <Image
+                    key={`${currentItem.id}-${imageKey}`}
+                    src={currentItem.image_url}
+                    alt={currentItem.name || currentItem.type}
+                    fill
+                    className="object-contain"
+                    sizes="(max-width: 512px) 100vw, 512px"
+                    priority
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                    No image
+                  </div>
+                )}
+              </div>
+            </Link>
 
             {/* Navigation arrows */}
             {items.length > 1 && (
@@ -169,6 +184,12 @@ export function OutfitPreviewDialog({ outfit, open, onClose }: OutfitPreviewDial
             {currentItem.name && (
               <p className="font-medium">{currentItem.name}</p>
             )}
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5 mt-1" asChild>
+              <Link href={`/dashboard/wardrobe?item=${currentItem.id}`}>
+                <ExternalLink className="h-3 w-3" />
+                View item details
+              </Link>
+            </Button>
           </div>
 
           {/* Thumbnail strip */}
@@ -227,6 +248,57 @@ export function OutfitPreviewDialog({ outfit, open, onClose }: OutfitPreviewDial
                     <span className="font-medium text-foreground">Tip:</span> {outfit.style_notes}
                   </p>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Family ratings section */}
+          {isInFamily && (
+            <div className="border-t p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold flex items-center gap-2">
+                  <Users className="h-4 w-4" />
+                  Family Ratings
+                  {outfit.family_rating_count != null && outfit.family_rating_count > 0 && (
+                    <span className="text-muted-foreground font-normal">
+                      ({outfit.family_rating_average?.toFixed(1)}{' '}
+                      <Star className="h-3 w-3 inline fill-yellow-400 text-yellow-400" /> avg)
+                    </span>
+                  )}
+                </h3>
+                {!showRatingForm && !myRating && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setShowRatingForm(true)}
+                    className="h-7 text-xs"
+                  >
+                    <Star className="h-3 w-3 mr-1" />
+                    Rate
+                  </Button>
+                )}
+              </div>
+
+              {(showRatingForm || myRating) && (
+                <FamilyRatingForm
+                  outfitId={outfit.id}
+                  existingRating={myRating ?? undefined}
+                  onSuccess={() => setShowRatingForm(false)}
+                />
+              )}
+
+              {outfit.family_ratings && outfit.family_ratings.length > 0 && (
+                <FamilyRatingsDisplay
+                  ratings={outfit.family_ratings}
+                  outfitId={outfit.id}
+                  currentUserId={currentMember?.id}
+                />
+              )}
+
+              {(!outfit.family_ratings || outfit.family_ratings.length === 0) && !showRatingForm && !myRating && (
+                <p className="text-xs text-muted-foreground">
+                  No family ratings yet. Be the first to rate!
+                </p>
               )}
             </div>
           )}

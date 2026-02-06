@@ -17,6 +17,13 @@ import {
   RotateCcw,
   RotateCw,
   Layers,
+  Droplets,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Plus,
+  Star,
+  ImageIcon,
 } from 'lucide-react';
 import {
   Dialog,
@@ -46,8 +53,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
-import { useUpdateItem, useDeleteItem, useReanalyzeItem, useRotateImage } from '@/lib/hooks/use-items';
+import { useUpdateItem, useDeleteItem, useReanalyzeItem, useRotateImage, useLogWash, useWashHistory, useItemWearStats, useItemWearHistory, useAddItemImage, useDeleteItemImage, useSetPrimaryImage } from '@/lib/hooks/use-items';
 import { Item, CLOTHING_TYPES, CLOTHING_COLORS } from '@/lib/types';
 import { ColorEyedropper } from '@/components/color-eyedropper';
 import { GeneratePairingsDialog } from '@/components/generate-pairings-dialog';
@@ -73,12 +82,23 @@ export function ItemDetailDialog({ item, open, onOpenChange }: ItemDetailDialogP
     primary_color: '',
     notes: '',
     favorite: false,
+    wash_interval: undefined as number | undefined,
   });
+  const [showWashHistory, setShowWashHistory] = useState(false);
+  const [showWearHistory, setShowWearHistory] = useState(false);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
 
   const updateItem = useUpdateItem();
   const deleteItem = useDeleteItem();
   const reanalyzeItem = useReanalyzeItem();
   const rotateImage = useRotateImage();
+  const logWash = useLogWash();
+  const { data: washHistory } = useWashHistory(item?.id || '');
+  const { data: wearStats } = useItemWearStats(item?.id || '');
+  const { data: wearHistory } = useItemWearHistory(item?.id || '', 20);
+  const addImage = useAddItemImage();
+  const deleteImage = useDeleteItemImage();
+  const setPrimary = useSetPrimaryImage();
 
   useEffect(() => {
     if (item) {
@@ -90,8 +110,10 @@ export function ItemDetailDialog({ item, open, onOpenChange }: ItemDetailDialogP
         primary_color: item.primary_color || '',
         notes: item.notes || '',
         favorite: item.favorite,
+        wash_interval: item.wash_interval ?? undefined,
       });
       setIsEditing(false);
+      setActiveImageIndex(0);
     }
   }, [item]);
 
@@ -109,11 +131,22 @@ export function ItemDetailDialog({ item, open, onOpenChange }: ItemDetailDialogP
           primary_color: editForm.primary_color || undefined,
           notes: editForm.notes || undefined,
           favorite: editForm.favorite,
+          wash_interval: editForm.wash_interval,
         },
       });
       setIsEditing(false);
     } catch (error) {
       console.error('Failed to update item:', error);
+    }
+  };
+
+  const handleMarkWashed = async () => {
+    try {
+      await logWash.mutateAsync({ id: item.id });
+      toast.success('Marked as washed');
+    } catch (error) {
+      console.error('Failed to log wash:', error);
+      toast.error('Failed to mark as washed');
     }
   };
 
@@ -267,20 +300,126 @@ export function ItemDetailDialog({ item, open, onOpenChange }: ItemDetailDialogP
           {/* Scrollable content */}
           <div className="flex-1 overflow-y-auto overscroll-contain p-6 pt-4">
             <div className="grid gap-6 sm:grid-cols-2">
-            {/* Image */}
-            <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
-              <Image
-                key={imageKey}
-                src={`${imageUrl}&v=${imageKey}`}
-                alt={item.name || item.type}
-                fill
-                className="object-cover"
-                sizes="(max-width: 640px) 100vw, 50vw"
-              />
-              {isAnalyzing && (
-                <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2">
-                  <Loader2 className="h-8 w-8 text-white animate-spin" />
-                  <span className="text-white text-sm font-medium">AI Analyzing...</span>
+            {/* Image Gallery */}
+            <div className="space-y-2">
+              <div className="relative aspect-square bg-muted rounded-lg overflow-hidden">
+                {(() => {
+                  const allImages = [
+                    { url: `${imageUrl}&v=${imageKey}`, id: 'primary' },
+                    ...(item.additional_images || []).map((img) => ({ url: img.image_url, id: img.id })),
+                  ];
+                  const currentImage = allImages[activeImageIndex] || allImages[0];
+                  return (
+                    <>
+                      <Image
+                        key={`${currentImage.id}-${imageKey}`}
+                        src={currentImage.url}
+                        alt={item.name || item.type}
+                        fill
+                        className="object-cover"
+                        sizes="(max-width: 640px) 100vw, 50vw"
+                      />
+                      {allImages.length > 1 && (
+                        <>
+                          <button
+                            className="absolute left-1 top-1/2 -translate-y-1/2 bg-black/50 text-white rounded-full p-1 hover:bg-black/70"
+                            onClick={() => setActiveImageIndex((i) => (i - 1 + allImages.length) % allImages.length)}
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+                          <button
+                            className="absolute right-1 top-1/2 -translate-y-1/2 bg-black/50 text-white rounded-full p-1 hover:bg-black/70"
+                            onClick={() => setActiveImageIndex((i) => (i + 1) % allImages.length)}
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                          </button>
+                          <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1">
+                            {allImages.map((_, idx) => (
+                              <button
+                                key={idx}
+                                className={`w-1.5 h-1.5 rounded-full ${idx === activeImageIndex ? 'bg-white' : 'bg-white/50'}`}
+                                onClick={() => setActiveImageIndex(idx)}
+                              />
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
+                {isAnalyzing && (
+                  <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center gap-2">
+                    <Loader2 className="h-8 w-8 text-white animate-spin" />
+                    <span className="text-white text-sm font-medium">AI Analyzing...</span>
+                  </div>
+                )}
+              </div>
+              {/* Thumbnail strip */}
+              {(item.additional_images?.length > 0 || isEditing) && (
+                <div className="flex gap-1.5 overflow-x-auto">
+                  <button
+                    className={`relative w-12 h-12 rounded border-2 overflow-hidden flex-shrink-0 ${activeImageIndex === 0 ? 'border-primary' : 'border-transparent'}`}
+                    onClick={() => setActiveImageIndex(0)}
+                  >
+                    <Image src={imageUrl} alt="Primary" fill className="object-cover" sizes="48px" />
+                  </button>
+                  {(item.additional_images || []).map((img, idx) => (
+                    <div key={img.id} className="relative flex-shrink-0">
+                      <button
+                        className={`relative w-12 h-12 rounded border-2 overflow-hidden ${activeImageIndex === idx + 1 ? 'border-primary' : 'border-transparent'}`}
+                        onClick={() => setActiveImageIndex(idx + 1)}
+                      >
+                        <Image src={img.thumbnail_url || img.image_url} alt="" fill className="object-cover" sizes="48px" />
+                      </button>
+                      {isEditing && (
+                        <div className="absolute -top-1 -right-1 flex gap-0.5">
+                          <button
+                            className="bg-primary text-primary-foreground rounded-full p-0.5 hover:bg-primary/90"
+                            title="Set as primary"
+                            onClick={() => {
+                              setPrimary.mutate({ itemId: item.id, imageId: img.id });
+                              setActiveImageIndex(0);
+                            }}
+                          >
+                            <Star className="h-2.5 w-2.5" />
+                          </button>
+                          <button
+                            className="bg-destructive text-destructive-foreground rounded-full p-0.5 hover:bg-destructive/90"
+                            title="Delete image"
+                            onClick={() => {
+                              deleteImage.mutate({ itemId: item.id, imageId: img.id });
+                              if (activeImageIndex > idx) setActiveImageIndex((i) => i - 1);
+                            }}
+                          >
+                            <X className="h-2.5 w-2.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {isEditing && (item.additional_images?.length || 0) < 4 && (
+                    <label
+                      className="w-12 h-12 rounded border-2 border-dashed border-muted-foreground/30 flex items-center justify-center cursor-pointer hover:border-primary/50 flex-shrink-0"
+                    >
+                      {addImage.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                      ) : (
+                        <Plus className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            addImage.mutate({ itemId: item.id, file });
+                          }
+                          e.target.value = '';
+                        }}
+                      />
+                    </label>
+                  )}
                 </div>
               )}
             </div>
@@ -363,6 +502,20 @@ export function ItemDetailDialog({ item, open, onOpenChange }: ItemDetailDialogP
                       rows={3}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label>Wash Interval (wears)</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={editForm.wash_interval ?? ''}
+                      onChange={(e) => setEditForm({ ...editForm, wash_interval: e.target.value ? parseInt(e.target.value) : undefined })}
+                      placeholder={`Default: ${item.effective_wash_interval}`}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Number of wears before this item needs washing. Leave blank for default.
+                    </p>
+                  </div>
                   <div className="flex gap-2 pt-2">
                     <Button
                       variant="outline"
@@ -425,6 +578,167 @@ export function ItemDetailDialog({ item, open, onOpenChange }: ItemDetailDialogP
                       </div>
                     )}
                   </div>
+
+                  {/* Wash Status */}
+                  <div className="space-y-2 pt-2 border-t">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Droplets className={`h-4 w-4 ${item.needs_wash ? 'text-amber-500' : 'text-muted-foreground'}`} />
+                        Wash Status
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={handleMarkWashed}
+                        disabled={logWash.isPending}
+                      >
+                        {logWash.isPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        ) : (
+                          <Droplets className="h-3 w-3 mr-1" />
+                        )}
+                        Mark Washed
+                      </Button>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Wears since wash: {item.wears_since_wash}/{item.effective_wash_interval}</span>
+                        {item.needs_wash && (
+                          <span className="text-amber-500 font-medium">Needs washing</span>
+                        )}
+                      </div>
+                      <Progress
+                        value={Math.min((item.wears_since_wash / item.effective_wash_interval) * 100, 100)}
+                        className={`h-2 ${item.needs_wash ? '[&>div]:bg-amber-500' : ''}`}
+                      />
+                      {item.last_washed_at && (
+                        <p className="text-xs text-muted-foreground">
+                          Last washed: {new Date(item.last_washed_at).toLocaleDateString()}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Wash History */}
+                    {washHistory && washHistory.length > 0 && (
+                      <Collapsible open={showWashHistory} onOpenChange={setShowWashHistory}>
+                        <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                          <ChevronDown className={`h-3 w-3 transition-transform ${showWashHistory ? 'rotate-180' : ''}`} />
+                          Wash history ({washHistory.length})
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="mt-1.5 space-y-1">
+                          {washHistory.map((wash) => (
+                            <div key={wash.id} className="text-xs text-muted-foreground flex items-center gap-2">
+                              <span>{new Date(wash.washed_at).toLocaleDateString()}</span>
+                              {wash.method && <Badge variant="outline" className="text-[10px] h-4">{wash.method}</Badge>}
+                              {wash.notes && <span className="truncate">{wash.notes}</span>}
+                            </div>
+                          ))}
+                        </CollapsibleContent>
+                      </Collapsible>
+                    )}
+                  </div>
+
+                  {/* Wear History */}
+                  {item.wear_count > 0 && wearStats && (
+                    <div className="space-y-2 pt-2 border-t">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        Wear History
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-muted/50 rounded-md p-2">
+                          <p className="text-muted-foreground">Total wears</p>
+                          <p className="font-medium text-sm">{wearStats.total_wears}</p>
+                        </div>
+                        <div className="bg-muted/50 rounded-md p-2">
+                          <p className="text-muted-foreground">Last worn</p>
+                          <p className="font-medium text-sm">
+                            {wearStats.days_since_last_worn === null
+                              ? 'Never'
+                              : wearStats.days_since_last_worn === 0
+                              ? 'Today'
+                              : `${wearStats.days_since_last_worn}d ago`}
+                          </p>
+                        </div>
+                        <div className="bg-muted/50 rounded-md p-2">
+                          <p className="text-muted-foreground">Avg/month</p>
+                          <p className="font-medium text-sm">{wearStats.average_wears_per_month}</p>
+                        </div>
+                        {wearStats.most_common_occasion && (
+                          <div className="bg-muted/50 rounded-md p-2">
+                            <p className="text-muted-foreground">Usual occasion</p>
+                            <p className="font-medium text-sm capitalize">{wearStats.most_common_occasion}</p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Mini bar chart - wear by month */}
+                      {Object.keys(wearStats.wear_by_month).length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Last 6 months</p>
+                          <div className="flex items-end gap-1 h-12">
+                            {Object.entries(wearStats.wear_by_month).map(([month, count]) => {
+                              const maxCount = Math.max(...Object.values(wearStats.wear_by_month), 1);
+                              const height = (count / maxCount) * 100;
+                              return (
+                                <div key={month} className="flex-1 flex flex-col items-center gap-0.5" title={`${month}: ${count} wears`}>
+                                  <div
+                                    className="w-full bg-primary/70 rounded-t-sm min-h-[2px]"
+                                    style={{ height: `${Math.max(height, 4)}%` }}
+                                  />
+                                  <span className="text-[9px] text-muted-foreground">{month.split('-')[1]}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Wear timeline */}
+                      {wearHistory && wearHistory.length > 0 && (
+                        <Collapsible open={showWearHistory} onOpenChange={setShowWearHistory}>
+                          <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                            <ChevronDown className={`h-3 w-3 transition-transform ${showWearHistory ? 'rotate-180' : ''}`} />
+                            Timeline ({wearHistory.length} events)
+                          </CollapsibleTrigger>
+                          <CollapsibleContent className="mt-1.5 space-y-1.5">
+                            {wearHistory.map((entry) => (
+                              <div key={entry.id} className="text-xs flex items-start gap-2">
+                                <span className="text-muted-foreground whitespace-nowrap">
+                                  {new Date(entry.worn_at).toLocaleDateString()}
+                                </span>
+                                {entry.occasion && (
+                                  <Badge variant="outline" className="text-[10px] h-4">{entry.occasion}</Badge>
+                                )}
+                                {entry.outfit && (
+                                  <div className="flex -space-x-1">
+                                    {entry.outfit.items.slice(0, 3).map((oi) => (
+                                      <div
+                                        key={oi.id}
+                                        className="w-5 h-5 rounded-full bg-muted border-2 border-background overflow-hidden"
+                                        title={oi.name || oi.type}
+                                      >
+                                        {oi.thumbnail_url && (
+                                          <Image
+                                            src={oi.thumbnail_url}
+                                            alt={oi.name || oi.type}
+                                            width={20}
+                                            height={20}
+                                            className="object-cover w-full h-full"
+                                          />
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </CollapsibleContent>
+                        </Collapsible>
+                      )}
+                    </div>
+                  )}
 
                   {/* AI Analysis */}
                   {(hasAiTags || item.ai_description) && item.status === 'ready' && (

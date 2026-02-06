@@ -76,6 +76,12 @@ class ClothingItem(Base):
     suggestion_count: Mapped[int] = mapped_column(Integer, default=0)
     acceptance_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Wash tracking
+    wears_since_wash: Mapped[int] = mapped_column(Integer, default=0)
+    last_washed_at: Mapped[date | None] = mapped_column(Date)
+    wash_interval: Mapped[int | None] = mapped_column(Integer)
+    needs_wash: Mapped[bool] = mapped_column(Boolean, default=False)
+
     # AI description (human-readable caption)
     ai_description: Mapped[str | None] = mapped_column(Text)
 
@@ -102,6 +108,15 @@ class ClothingItem(Base):
     wear_history: Mapped[list["ItemHistory"]] = relationship(
         "ItemHistory", back_populates="item", cascade="all, delete-orphan"
     )
+    wash_history: Mapped[list["WashHistory"]] = relationship(
+        "WashHistory", back_populates="item", cascade="all, delete-orphan"
+    )
+    additional_images: Mapped[list["ItemImage"]] = relationship(
+        "ItemImage",
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="ItemImage.position",
+    )
 
 
 class ItemHistory(Base):
@@ -124,3 +139,40 @@ class ItemHistory(Base):
     # Relationships
     item: Mapped["ClothingItem"] = relationship("ClothingItem", back_populates="wear_history")
     outfit: Mapped[Optional["Outfit"]] = relationship("Outfit")
+
+
+class WashHistory(Base):
+    __tablename__ = "wash_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clothing_items.id", ondelete="CASCADE"), nullable=False
+    )
+
+    washed_at: Mapped[date] = mapped_column(Date, nullable=False)
+    method: Mapped[str | None] = mapped_column(String(50))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    item: Mapped["ClothingItem"] = relationship("ClothingItem", back_populates="wash_history")
+
+
+class ItemImage(Base):
+    __tablename__ = "item_images"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clothing_items.id", ondelete="CASCADE"), nullable=False
+    )
+
+    image_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    thumbnail_path: Mapped[str | None] = mapped_column(String(500))
+    medium_path: Mapped[str | None] = mapped_column(String(500))
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    item: Mapped["ClothingItem"] = relationship("ClothingItem", back_populates="additional_images")

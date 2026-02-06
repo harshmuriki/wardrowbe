@@ -3,7 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,7 @@ from app.models.item import ClothingItem, ItemStatus
 from app.models.outfit import Outfit, OutfitStatus, UserFeedback
 from app.models.user import User
 from app.utils.auth import get_current_user
+from app.utils.signed_urls import sign_image_url
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
@@ -36,6 +37,13 @@ class WearStats(BaseModel):
     thumbnail_path: str | None
     wear_count: int
     last_worn_at: date | None
+
+    @computed_field
+    @property
+    def thumbnail_url(self) -> str | None:
+        if self.thumbnail_path:
+            return sign_image_url(self.thumbnail_path)
+        return None
 
 
 class AcceptanceRateTrend(BaseModel):

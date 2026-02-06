@@ -1,5 +1,3 @@
-"""Clothing item schemas for API requests/responses."""
-
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
@@ -8,10 +6,29 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.utils.signed_urls import sign_image_url
 
+# Default wash intervals by clothing type (wears between washes)
+DEFAULT_WASH_INTERVALS: dict[str, int] = {
+    "t-shirt": 1,
+    "shirt": 2,
+    "blouse": 2,
+    "pants": 4,
+    "jeans": 6,
+    "shorts": 3,
+    "dress": 2,
+    "skirt": 3,
+    "sweater": 5,
+    "hoodie": 4,
+    "jacket": 8,
+    "coat": 10,
+    "blazer": 5,
+    "suit": 5,
+    "shoes": 15,
+    "accessories": 20,
+    "other": 3,
+}
+
 
 class ItemTags(BaseModel):
-    """Tags structure for clothing items."""
-
     colors: list[str] = Field(default_factory=list)
     primary_color: str | None = None
     pattern: str | None = None
@@ -23,8 +40,6 @@ class ItemTags(BaseModel):
 
 
 class ItemBase(BaseModel):
-    """Base item fields."""
-
     type: str = Field(default="unknown", max_length=50)  # Default to unknown, AI will detect
     subtype: str | None = Field(None, max_length=50)
     name: str | None = Field(None, max_length=100)
@@ -36,16 +51,12 @@ class ItemBase(BaseModel):
 
 
 class ItemCreate(ItemBase):
-    """Schema for creating an item (tags set by AI or manually)."""
-
     tags: ItemTags | None = None
     colors: list[str] | None = None
     primary_color: str | None = None
 
 
 class ItemUpdate(BaseModel):
-    """Schema for updating an item."""
-
     type: str | None = Field(None, min_length=1, max_length=50)
     subtype: str | None = Field(None, max_length=50)
     name: str | None = Field(None, max_length=100)
@@ -57,11 +68,10 @@ class ItemUpdate(BaseModel):
     tags: ItemTags | None = None
     colors: list[str] | None = None
     primary_color: str | None = None
+    wash_interval: int | None = None
 
 
 class ItemResponse(ItemBase):
-    """Item response schema."""
-
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
@@ -86,6 +96,11 @@ class ItemResponse(ItemBase):
     last_suggested_at: date | None = None
     suggestion_count: int = 0
     acceptance_count: int = 0
+    wears_since_wash: int = 0
+    last_washed_at: date | None = None
+    wash_interval: int | None = None
+    needs_wash: bool = False
+    additional_images: list["ItemImageResponse"] = Field(default_factory=list)
     is_archived: bool = False
     archived_at: datetime | None = None
     archive_reason: str | None = None
@@ -95,13 +110,11 @@ class ItemResponse(ItemBase):
     @computed_field
     @property
     def image_url(self) -> str:
-        """Signed URL for the full-size image."""
         return sign_image_url(self.image_path)
 
     @computed_field
     @property
     def thumbnail_url(self) -> str | None:
-        """Signed URL for the thumbnail image."""
         if self.thumbnail_path:
             return sign_image_url(self.thumbnail_path)
         return None
@@ -109,15 +122,19 @@ class ItemResponse(ItemBase):
     @computed_field
     @property
     def medium_url(self) -> str | None:
-        """Signed URL for the medium-size image."""
         if self.medium_path:
             return sign_image_url(self.medium_path)
         return None
 
+    @computed_field
+    @property
+    def effective_wash_interval(self) -> int:
+        if self.wash_interval is not None:
+            return self.wash_interval
+        return DEFAULT_WASH_INTERVALS.get(self.type, 3)
+
 
 class ItemListResponse(BaseModel):
-    """Paginated item list response."""
-
     items: list[ItemResponse]
     total: int
     page: int
@@ -126,34 +143,29 @@ class ItemListResponse(BaseModel):
 
 
 class ItemFilter(BaseModel):
-    """Filter parameters for item listing."""
-
     type: str | None = None
     subtype: str | None = None
     colors: list[str] | None = None
     status: str | None = None
     favorite: bool | None = None
+    needs_wash: bool | None = None
     is_archived: bool = False
     search: str | None = None
+    sort_by: str | None = None
+    sort_order: str = "desc"
 
 
 class LogWearRequest(BaseModel):
-    """Request to log an item as worn."""
-
     worn_at: date = Field(default_factory=date.today)
     occasion: str | None = None
     notes: str | None = None
 
 
 class ArchiveRequest(BaseModel):
-    """Request to archive an item."""
-
     reason: str | None = Field(None, max_length=50)
 
 
 class BulkUploadResult(BaseModel):
-    """Result for a single item in bulk upload."""
-
     filename: str
     success: bool
     item: ItemResponse | None = None
@@ -161,8 +173,6 @@ class BulkUploadResult(BaseModel):
 
 
 class BulkUploadResponse(BaseModel):
-    """Response for bulk upload operation."""
-
     total: int
     successful: int
     failed: int
@@ -170,20 +180,12 @@ class BulkUploadResponse(BaseModel):
 
 
 class BulkFilters(BaseModel):
-    """Filters for bulk operations when using select_all."""
-
     type: str | None = None
     search: str | None = None
     is_archived: bool | None = None
 
 
 class BulkDeleteRequest(BaseModel):
-    """Request for bulk delete operation.
-
-    Either provide item_ids for explicit selection,
-    or use select_all=True with optional excluded_ids and filters.
-    """
-
     # Explicit selection
     item_ids: list[UUID] | None = None
 
@@ -193,7 +195,6 @@ class BulkDeleteRequest(BaseModel):
     filters: BulkFilters | None = None
 
     def model_post_init(self, __context):
-        """Validate that either item_ids or select_all is provided."""
         if not self.select_all and not self.item_ids:
             raise ValueError("Either item_ids or select_all=True must be provided")
         if self.select_all and self.item_ids:
@@ -201,20 +202,12 @@ class BulkDeleteRequest(BaseModel):
 
 
 class BulkDeleteResponse(BaseModel):
-    """Response for bulk delete operation."""
-
     deleted: int
     failed: int
     errors: list[str] = Field(default_factory=list)
 
 
 class BulkAnalyzeRequest(BaseModel):
-    """Request for bulk re-analyze operation.
-
-    Either provide item_ids for explicit selection,
-    or use select_all=True with optional excluded_ids and filters.
-    """
-
     # Explicit selection
     item_ids: list[UUID] | None = None
 
@@ -224,7 +217,6 @@ class BulkAnalyzeRequest(BaseModel):
     filters: BulkFilters | None = None
 
     def model_post_init(self, __context):
-        """Validate that either item_ids or select_all is provided."""
         if not self.select_all and not self.item_ids:
             raise ValueError("Either item_ids or select_all=True must be provided")
         if self.select_all and self.item_ids:
@@ -232,8 +224,58 @@ class BulkAnalyzeRequest(BaseModel):
 
 
 class BulkAnalyzeResponse(BaseModel):
-    """Response for bulk re-analyze operation."""
-
     queued: int
     failed: int
     errors: list[str] = Field(default_factory=list)
+
+
+class ItemImageResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    item_id: UUID
+    image_path: str
+    thumbnail_path: str | None = None
+    medium_path: str | None = None
+    position: int
+    created_at: datetime
+
+    @computed_field
+    @property
+    def image_url(self) -> str:
+        return sign_image_url(self.image_path)
+
+    @computed_field
+    @property
+    def thumbnail_url(self) -> str | None:
+        if self.thumbnail_path:
+            return sign_image_url(self.thumbnail_path)
+        return None
+
+    @computed_field
+    @property
+    def medium_url(self) -> str | None:
+        if self.medium_path:
+            return sign_image_url(self.medium_path)
+        return None
+
+
+class ReorderImagesRequest(BaseModel):
+    image_ids: list[UUID]
+
+
+class LogWashRequest(BaseModel):
+    washed_at: date = Field(default_factory=date.today)
+    method: str | None = Field(None, max_length=50)
+    notes: str | None = None
+
+
+class WashHistoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    item_id: UUID
+    washed_at: date
+    method: str | None = None
+    notes: str | None = None
+    created_at: datetime

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { api, setAccessToken } from '@/lib/api';
 
+// Helper to set token if available (for NextAuth mode)
 function useSetTokenIfAvailable() {
   const { data: session } = useSession();
   if (session?.accessToken) {
