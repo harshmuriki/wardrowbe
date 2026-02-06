@@ -11,8 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.item import ClothingItem, ItemHistory, ItemStatus
-from app.models.learning import ItemPairScore
-from app.models.outfit import FamilyOutfitRating, Outfit, OutfitItem, OutfitSource, OutfitStatus
+from app.models.learning import ItemPairScore, UserLearningProfile
+from app.models.outfit import (
+    FamilyOutfitRating,
+    Outfit,
+    OutfitItem,
+    OutfitSource,
+    OutfitStatus,
+    UserFeedback,
+)
 from app.models.preference import UserPreference
 from app.models.user import User
 from app.services.ai_service import AIService
@@ -107,7 +114,7 @@ class RecommendationService:
             and_(
                 ClothingItem.user_id == user.id,
                 ClothingItem.status == ItemStatus.ready,
-                ClothingItem.is_archived == False,
+                ClothingItem.is_archived.is_(False),
             )
         )
 
@@ -251,8 +258,6 @@ class RecommendationService:
         cutoff_date = user_today - timedelta(days=days)
 
         # Get outfits that were marked as worn in the cutoff period
-        from app.models.outfit import UserFeedback
-
         query = (
             select(Outfit)
             .join(UserFeedback, Outfit.id == UserFeedback.outfit_id)
@@ -375,8 +380,6 @@ class RecommendationService:
         return ""
 
     async def _get_learned_preferences(self, user_id: UUID) -> dict:
-        from app.models.learning import UserLearningProfile
-
         result = await self.db.execute(
             select(UserLearningProfile).where(UserLearningProfile.user_id == user_id)
         )
@@ -584,7 +587,7 @@ class RecommendationService:
                             ClothingItem.id.in_(missing_ids),
                             ClothingItem.user_id == user.id,
                             ClothingItem.status == ItemStatus.ready,
-                            ClothingItem.is_archived == False,
+                            ClothingItem.is_archived.is_(False),
                         )
                     )
                 )

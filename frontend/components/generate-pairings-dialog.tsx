@@ -66,7 +66,7 @@ export function GeneratePairingsDialog({
 
   if (!item) return null;
 
-  const imageUrl = item.thumbnail_url || item.image_url;
+  const imageUrl = item.thumbnail_url || item.image_url || item.image_path;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>

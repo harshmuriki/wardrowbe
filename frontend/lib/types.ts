@@ -29,6 +29,9 @@ export interface Item {
   image_path: string;
   thumbnail_path?: string;
   medium_path?: string;
+  image_url?: string;
+  thumbnail_url?: string;
+  medium_url?: string;
   tags: ItemTags;
   colors: string[];
   primary_color?: string;
@@ -246,6 +249,8 @@ export interface OutfitItem {
   colors: string[];
   image_path: string;
   thumbnail_path?: string;
+  image_url?: string;
+  thumbnail_url?: string;
   layer_type?: string;
   position: number;
 }
@@ -306,6 +311,8 @@ export interface SourceItem {
   primary_color?: string;
   image_path: string;
   thumbnail_path?: string;
+  image_url?: string;
+  thumbnail_url?: string;
 }
 
 export interface Pairing extends Outfit {

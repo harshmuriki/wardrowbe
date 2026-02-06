@@ -1,4 +1,3 @@
-import asyncio
 import os
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -9,6 +8,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.api.auth import create_access_token
 from app.database import Base, get_db
 from app.main import app
 from app.models import User, UserPreference
@@ -19,14 +19,6 @@ TEST_DATABASE_URL = os.getenv(
     "TEST_DATABASE_URL",
     os.getenv("DATABASE_URL", "postgresql+asyncpg://wardrobe:wardrobe@localhost:5432/wardrobe"),
 )
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -112,8 +104,6 @@ async def test_user_with_preferences(db_session: AsyncSession, test_user: User) 
 @pytest.fixture
 def auth_headers(test_user: User) -> dict[str, str]:
     """Create authorization headers for authenticated requests."""
-    from app.api.auth import create_access_token
-
     token = create_access_token(test_user.external_id)
     return {"Authorization": f"Bearer {token}"}
 

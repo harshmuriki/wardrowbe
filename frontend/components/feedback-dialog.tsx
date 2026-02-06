@@ -65,7 +65,7 @@ interface AccumulatedItem {
   thumbnail_path?: string;
   thumbnail_url?: string;
   image_path: string;
-  image_url: string;
+  image_url?: string;
   is_archived: boolean;
 }
 
@@ -348,7 +348,7 @@ export function FeedbackDialog({ outfit, open, onClose }: FeedbackDialogProps) {
                       )}
                     >
                       <Image
-                        src={item.thumbnail_url || item.image_url}
+                        src={item.thumbnail_url || item.image_url || item.image_path}
                         alt={item.name || item.type}
                         fill
                         className="object-cover"

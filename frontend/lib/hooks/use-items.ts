@@ -464,6 +464,8 @@ export interface BulkOperationParams {
   filters?: {
     type?: string;
     search?: string;
+    needs_wash?: boolean;
+    favorite?: boolean;
     is_archived?: boolean;
   };
 }

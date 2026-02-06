@@ -3,19 +3,24 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import get_db
 from app.models.notification import Notification
 from app.models.schedule import Schedule
 from app.models.user import User
 from app.schemas.notification import (
+    EmailConfig,
+    MattermostConfig,
     MessageResponse,
     NotificationResponse,
     NotificationSettingsCreate,
     NotificationSettingsResponse,
     NotificationSettingsUpdate,
+    NtfyConfig,
     ScheduleCreate,
     ScheduleResponse,
     ScheduleUpdate,
@@ -105,8 +110,6 @@ async def get_ntfy_defaults():
 
     User only needs to set their topic - server and token are pre-filled.
     """
-    from app.config import get_settings
-
     settings = get_settings()
     return {
         "server": settings.ntfy_server or "https://ntfy.sh",
@@ -135,10 +138,6 @@ async def create_notification_setting(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new notification channel configuration."""
-    from pydantic import ValidationError
-
-    from app.schemas.notification import EmailConfig, MattermostConfig, NtfyConfig
-
     # Validate channel-specific config
     try:
         if data.channel == "ntfy":
@@ -187,10 +186,6 @@ async def update_notification_setting(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a notification channel configuration."""
-    from pydantic import ValidationError
-
-    from app.schemas.notification import EmailConfig, MattermostConfig, NtfyConfig
-
     service = NotificationService(db)
 
     # If config is being updated, validate it against the channel type

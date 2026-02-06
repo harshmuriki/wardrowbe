@@ -1,6 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,8 +112,6 @@ async def test_ai_endpoint(
     data: dict,
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> dict:
-    import httpx
-
     url = data.get("url", "").rstrip("/")
     if not url:
         raise HTTPException(

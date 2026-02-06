@@ -5,14 +5,25 @@ from datetime import UTC, datetime, timedelta
 from arq import cron
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import selectinload, sessionmaker
 
 from app.config import get_settings
+from app.models.item import ClothingItem
 from app.models.learning import UserLearningProfile
 from app.models.notification import Notification, NotificationSettings, NotificationStatus
+from app.models.outfit import Outfit, OutfitSource, OutfitStatus
 from app.models.schedule import Schedule
+from app.models.user import User
 from app.services.learning_service import LearningService
-from app.services.notification_service import DeliveryStatus, NotificationDispatcher
+from app.services.notification_service import (
+    DeliveryStatus,
+    NotificationDispatcher,
+    NtfyConfig,
+    NtfyNotification,
+    NtfyProvider,
+)
+from app.services.recommendation_service import RecommendationService
+from app.services.weather_service import get_weather_service
 
 logger = logging.getLogger(__name__)
 
@@ -117,13 +128,6 @@ async def retry_failed_notifications(ctx: dict):
 
 
 async def check_scheduled_notifications(ctx: dict):
-    from sqlalchemy.orm import selectinload
-
-    from app.models.outfit import OutfitSource
-    from app.models.user import User
-    from app.services.recommendation_service import RecommendationService
-    from app.services.weather_service import get_weather_service
-
     logger.info("Checking scheduled notifications...")
 
     db = await get_db_session()
@@ -139,15 +143,15 @@ async def check_scheduled_notifications(ctx: dict):
         result = await db.execute(
             select(Schedule).where(
                 and_(
-                    Schedule.enabled == True,
+                    Schedule.enabled.is_(True),
                     # Match same-day OR day-before schedules
                     (
                         (
-                            (Schedule.notify_day_before == False)
+                            (Schedule.notify_day_before.is_(False))
                             & (Schedule.day_of_week == current_utc_day)
                         )
                         | (
-                            (Schedule.notify_day_before == True)
+                            (Schedule.notify_day_before.is_(True))
                             & (Schedule.day_of_week == tomorrow_utc_day)
                         )
                     ),
@@ -199,7 +203,7 @@ async def check_scheduled_notifications(ctx: dict):
                 select(NotificationSettings).where(
                     and_(
                         NotificationSettings.user_id == schedule.user_id,
-                        NotificationSettings.enabled == True,
+                        NotificationSettings.enabled.is_(True),
                     )
                 )
             )
@@ -269,8 +273,6 @@ async def check_scheduled_notifications(ctx: dict):
 
 
 async def check_wash_reminders(ctx: dict):
-    from app.models.item import ClothingItem
-
     logger.info("Checking wash reminders...")
 
     db = await get_db_session()
@@ -344,12 +346,6 @@ async def check_wash_reminders(ctx: dict):
                 sent_channel = "unknown"
                 for channel in channels:
                     try:
-                        from app.services.notification_service import (
-                            NtfyConfig,
-                            NtfyNotification,
-                            NtfyProvider,
-                        )
-
                         if channel.channel == "ntfy":
                             provider = NtfyProvider(NtfyConfig(**channel.config))
                             result = await provider.send(
@@ -411,9 +407,6 @@ async def update_learning_profiles(ctx: dict):
 
         # Find users who need profile updates
         # Query users with learning profiles that are stale or don't exist
-        from app.models.outfit import Outfit, OutfitStatus
-        from app.models.user import User
-
         # Get users who have given feedback (accepted/rejected outfits) recently
         result = await db.execute(
             select(User.id)

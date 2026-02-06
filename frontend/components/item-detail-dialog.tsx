@@ -200,7 +200,7 @@ export function ItemDetailDialog({ item, open, onOpenChange }: ItemDetailDialogP
   const isAnalyzing = reanalyzeItem.isPending || item.status === 'processing';
 
   // Use signed URL from backend for better quality in detail view
-  const imageUrl = item.image_url;
+  const imageUrl = item.image_url || item.image_path;
   const colorInfo = CLOTHING_COLORS.find((c) => c.value === item.primary_color);
   const typeInfo = CLOTHING_TYPES.find((t) => t.value === item.type);
 
