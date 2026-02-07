@@ -156,7 +156,7 @@ class ItemFilter(BaseModel):
 
 
 class LogWearRequest(BaseModel):
-    worn_at: date = Field(default_factory=date.today)
+    worn_at: date | None = None  # If None, use user's timezone to determine today
     occasion: str | None = None
     notes: str | None = None
 
@@ -265,7 +265,7 @@ class ReorderImagesRequest(BaseModel):
 
 
 class LogWashRequest(BaseModel):
-    washed_at: date = Field(default_factory=date.today)
+    washed_at: date | None = None  # If None, use user's timezone to determine today
     method: str | None = Field(None, max_length=50)
     notes: str | None = None
 

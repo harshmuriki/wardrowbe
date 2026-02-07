@@ -27,8 +27,10 @@ import { AddItemDialog } from '@/components/add-item-dialog';
 import { ItemDetailDialog } from '@/components/item-detail-dialog';
 import { BulkActionToolbar, BulkSelection } from '@/components/bulk-action-toolbar';
 import { useItems, useItem, useItemTypes, useReanalyzeItem, useBulkDeleteItems, useBulkReanalyzeItems, BulkOperationParams } from '@/lib/hooks/use-items';
+import { useUserProfile } from '@/lib/hooks/use-user';
 import { CLOTHING_TYPES, CLOTHING_COLORS, Item } from '@/lib/types';
 import { toast } from 'sonner';
+import { formatWornAgo, getWornAgoColorClass } from '@/lib/utils';
 
 const SORT_OPTIONS = [
   { label: 'Newest first', value: 'created_at', order: 'desc' as const },
@@ -47,12 +49,14 @@ function ItemCard({
   onSelect,
   onRetry,
   onClick,
+  userTimezone,
 }: {
   item: Item;
   selected: boolean;
   onSelect: (id: string, checked: boolean) => void;
   onRetry?: (id: string) => void;
   onClick?: () => void;
+  userTimezone: string;
 }) {
   const colorInfo = CLOTHING_COLORS.find((c) => c.value === item.primary_color);
   const isProcessing = item.status === 'processing';
@@ -163,20 +167,8 @@ function ItemCard({
           )}
         </div>
         {item.last_worn_at ? (
-          <p className={`text-xs mt-1 ${
-            (() => {
-              const days = Math.floor((Date.now() - new Date(item.last_worn_at).getTime()) / 86400000);
-              if (days < 7) return 'text-green-600 dark:text-green-400';
-              if (days <= 30) return 'text-muted-foreground';
-              return 'text-muted-foreground/60';
-            })()
-          }`}>
-            {(() => {
-              const days = Math.floor((Date.now() - new Date(item.last_worn_at).getTime()) / 86400000);
-              if (days === 0) return 'Worn today';
-              if (days === 1) return 'Worn yesterday';
-              return `Worn ${days}d ago`;
-            })()}
+          <p className={`text-xs mt-1 ${getWornAgoColorClass(item.last_worn_at, userTimezone)}`}>
+            {formatWornAgo(item.last_worn_at, userTimezone)}
           </p>
         ) : item.wear_count > 0 ? (
           <p className="text-xs text-muted-foreground mt-1">
@@ -227,6 +219,8 @@ function EmptyWardrobe({ onAddClick }: { onAddClick: () => void }) {
 export default function WardrobePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { data: userProfile } = useUserProfile();
+  const userTimezone = userProfile?.timezone || 'UTC';
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [selection, setSelection] = useState<BulkSelection>({
     mode: 'none',
@@ -605,6 +599,7 @@ export default function WardrobePage() {
                 onSelect={handleSelect}
                 onRetry={handleRetry}
                 onClick={() => setDetailItemId(item.id)}
+                userTimezone={userTimezone}
               />
             );
           })}

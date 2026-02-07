@@ -1,6 +1,7 @@
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -136,7 +137,7 @@ class ItemService:
                 and_(
                     ClothingItem.user_id == user_id,
                     ClothingItem.image_hash == image_hash,
-                    ClothingItem.is_archived.is_(False),
+                    not ClothingItem.is_archived,
                 )
             )
         )
@@ -190,8 +191,8 @@ class ItemService:
             setattr(item, field, value)
 
         await self.db.flush()
-        # Re-fetch with eager loading to ensure relationships are loaded
-        return await self.get_by_id(item.id, item.user_id)
+        await self.db.refresh(item)
+        return item
 
     async def delete(self, item: ClothingItem) -> None:
         await self.db.delete(item)
@@ -207,8 +208,8 @@ class ItemService:
         item.archive_reason = reason
         item.status = ItemStatus.archived
         await self.db.flush()
-        # Re-fetch with eager loading to ensure relationships are loaded
-        return await self.get_by_id(item.id, item.user_id)
+        await self.db.refresh(item)
+        return item
 
     async def restore(self, item: ClothingItem) -> ClothingItem:
         item.is_archived = False
@@ -216,8 +217,8 @@ class ItemService:
         item.archive_reason = None
         item.status = ItemStatus.ready
         await self.db.flush()
-        # Re-fetch with eager loading to ensure relationships are loaded
-        return await self.get_by_id(item.id, item.user_id)
+        await self.db.refresh(item)
+        return item
 
     async def log_wear(
         self,
@@ -304,11 +305,18 @@ class ItemService:
         )
         return list(result.scalars().all())
 
-    async def get_wear_stats(self, item: ClothingItem) -> dict:
+    async def get_wear_stats(self, item: ClothingItem, user_timezone: str = "UTC") -> dict:
+        # Calculate today's date in user's timezone
+        try:
+            user_tz = ZoneInfo(user_timezone)
+        except Exception:
+            user_tz = ZoneInfo("UTC")
+        user_today = datetime.now(UTC).astimezone(user_tz).date()
+
         # Days since last worn
         days_since_last_worn = None
         if item.last_worn_at:
-            days_since_last_worn = (date.today() - item.last_worn_at).days
+            days_since_last_worn = (user_today - item.last_worn_at).days
 
         # Get all wear history for this item
         result = await self.db.execute(
@@ -319,14 +327,14 @@ class ItemService:
         history = list(result.scalars().all())
 
         # Average wears per month (over last 6 months)
-        six_months_ago = date.today() - timedelta(days=180)
+        six_months_ago = user_today - timedelta(days=180)
         recent_wears = [h for h in history if h.worn_at >= six_months_ago]
         avg_per_month = round(len(recent_wears) / 6, 1) if recent_wears else 0
 
         # Wear by month (last 6 months)
         wear_by_month: dict[str, int] = {}
         for i in range(5, -1, -1):
-            d = date.today() - timedelta(days=30 * i)
+            d = user_today - timedelta(days=30 * i)
             key = d.strftime("%Y-%m")
             wear_by_month[key] = 0
         for h in recent_wears:

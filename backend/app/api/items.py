@@ -1,6 +1,8 @@
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from arq import create_pool
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -603,9 +605,19 @@ async def log_item_wear(
             detail="Item not found",
         )
 
+    # Use user's timezone to determine today if worn_at not provided
+    if request.worn_at is None:
+        try:
+            user_tz = ZoneInfo(current_user.timezone or "UTC")
+        except Exception:
+            user_tz = ZoneInfo("UTC")
+        worn_at = datetime.now(UTC).astimezone(user_tz).date()
+    else:
+        worn_at = request.worn_at
+
     await item_service.log_wear(
         item=item,
-        worn_at=request.worn_at,
+        worn_at=worn_at,
         occasion=request.occasion,
         notes=request.notes,
     )
@@ -697,7 +709,7 @@ async def get_item_wear_stats(
             detail="Item not found",
         )
 
-    return await item_service.get_wear_stats(item)
+    return await item_service.get_wear_stats(item, current_user.timezone or "UTC")
 
 
 @router.post("/{item_id}/wash", response_model=ItemResponse)
@@ -716,9 +728,19 @@ async def log_item_wash(
             detail="Item not found",
         )
 
+    # Use user's timezone to determine today if washed_at not provided
+    if request.washed_at is None:
+        try:
+            user_tz = ZoneInfo(current_user.timezone or "UTC")
+        except Exception:
+            user_tz = ZoneInfo("UTC")
+        washed_at = datetime.now(UTC).astimezone(user_tz).date()
+    else:
+        washed_at = request.washed_at
+
     await item_service.log_wash(
         item=item,
-        washed_at=request.washed_at,
+        washed_at=washed_at,
         method=request.method,
         notes=request.notes,
     )
