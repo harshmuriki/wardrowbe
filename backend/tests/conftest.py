@@ -1,4 +1,10 @@
 import os
+
+# Set test environment
+os.environ["DEBUG"] = "true"
+os.environ["SECRET_KEY"] = "change-me-in-production"
+os.environ["STORAGE_PATH"] = "/tmp/wardrobe_test"
+
 from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import uuid4
