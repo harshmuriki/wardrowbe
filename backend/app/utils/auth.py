@@ -9,14 +9,13 @@ from app.config import get_settings
 from app.database import get_db
 from app.models.user import User
 from app.schemas.auth import AuthSession, TokenPayload
+from app.schemas.user import UserSyncRequest
 from app.services.user_service import UserService
 
 settings = get_settings()
 
-# HTTP Bearer token scheme
 bearer_scheme = HTTPBearer(auto_error=False)
 
-# Forward auth header names (TinyAuth, Authelia, Authentik, etc.)
 REMOTE_USER_HEADER = "Remote-User"
 REMOTE_EMAIL_HEADER = "Remote-Email"
 REMOTE_NAME_HEADER = "Remote-Name"
@@ -68,24 +67,17 @@ async def get_current_user(
     user_service = UserService(db)
     user = None
 
-    # Method 1: Check forward auth headers (TinyAuth, Authelia, Authentik)
-    # These headers are set by nginx after successful auth_request
+    # Forward auth headers (TinyAuth, Authelia, etc.)
     if settings.auth_trust_header:
         remote_user = request.headers.get(REMOTE_USER_HEADER)
         remote_email = request.headers.get(REMOTE_EMAIL_HEADER)
         remote_name = request.headers.get(REMOTE_NAME_HEADER)
 
         if remote_user:
-            # Try to find user by username/email
             user = await user_service.get_by_external_id(remote_user)
 
             if not user and remote_email:
-                # Try by email
                 user = await user_service.get_by_email(remote_email)
-
-            # Sync user data from forward auth headers
-            # This creates new users and updates existing ones
-            from app.schemas.user import UserSyncRequest
 
             sync_data = UserSyncRequest(
                 external_id=remote_user,
@@ -94,12 +86,11 @@ async def get_current_user(
             )
             user, _ = await user_service.sync_from_oidc(sync_data)
 
-    # Method 2: Fall back to JWT Bearer token
+    # Fall back to JWT Bearer token
     if not user and credentials:
         token_data = decode_token(credentials.credentials)
         user = await user_service.get_by_external_id(token_data.sub)
 
-    # No authentication provided
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -129,7 +120,6 @@ async def get_current_session(
     )
 
 
-# Type aliases for dependency injection
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentUserOptional = Annotated[User | None, Depends(get_current_user_optional)]
 CurrentSession = Annotated[AuthSession, Depends(get_current_session)]
