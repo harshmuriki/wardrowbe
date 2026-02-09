@@ -29,6 +29,11 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Google%20Play-Coming%20Soon-34A853?style=for-the-badge&logo=googleplay&logoColor=white" alt="Google Play - Coming Soon">
+  &nbsp;
+  <img src="https://img.shields.io/badge/App%20Store-Coming%20Soon-0D96F6?style=for-the-badge&logo=appstore&logoColor=white" alt="App Store - Coming Soon">
+</p>
 
 Self-hosted wardrobe management with AI-powered outfit recommendations. Take photos of your clothes, let AI tag them, and get daily outfit suggestions based on weather and occasion.
 
