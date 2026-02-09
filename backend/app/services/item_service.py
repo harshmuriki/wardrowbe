@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import attributes, selectinload
 
 from app.models.item import ClothingItem, ItemHistory, ItemStatus, WashHistory
 from app.schemas.item import DEFAULT_WASH_INTERVALS, ItemCreate, ItemFilter, ItemUpdate
@@ -137,7 +137,7 @@ class ItemService:
                 and_(
                     ClothingItem.user_id == user_id,
                     ClothingItem.image_hash == image_hash,
-                    not ClothingItem.is_archived,
+                    ClothingItem.is_archived == False,
                 )
             )
         )
@@ -183,12 +183,18 @@ class ItemService:
     async def update(self, item: ClothingItem, item_data: ItemUpdate) -> ClothingItem:
         update_data = item_data.model_dump(exclude_unset=True)
 
-        # Handle tags specially
         if "tags" in update_data and update_data["tags"]:
-            update_data["tags"] = update_data["tags"].model_dump(exclude_none=True)
+            tags = update_data["tags"]
+            if isinstance(tags, dict):
+                update_data["tags"] = {k: v for k, v in tags.items() if v is not None}
+            else:
+                update_data["tags"] = tags.model_dump(exclude_none=True)
 
         for field, value in update_data.items():
             setattr(item, field, value)
+
+        if "tags" in update_data:
+            attributes.flag_modified(item, "tags")
 
         await self.db.flush()
         # Re-fetch with eager loading to ensure relationships are properly loaded
