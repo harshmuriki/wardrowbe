@@ -115,7 +115,11 @@ export function MobileSidebar({ open, onClose }: MobileSidebarProps) {
                 </div>
                 <ul role="list" className="-mx-2 mt-2 space-y-1">
                   {secondaryNavigation.map((item) => {
-                    const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
+                    const matchesPath = pathname === item.href || pathname.startsWith(item.href + '/');
+                    const claimedByPrimary = navigation.some(
+                      (primary) => pathname === primary.href || pathname.startsWith(primary.href + '/')
+                    );
+                    const isActive = matchesPath && !claimedByPrimary;
                     return (
                       <li key={item.name}>
                         <Link
