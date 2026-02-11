@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    settings.validate_security()
+    warning = settings.validate_security()
+    if warning:
+        logger.error("Configuration: %s", warning)
     logger.info("Auth mode: %s", settings.get_auth_mode())
     yield
     await engine.dispose()

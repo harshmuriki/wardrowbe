@@ -160,6 +160,15 @@ export const authOptions: NextAuthOptions = {
               onboardingCompleted: syncData.onboarding_completed,
             };
           }
+
+          const errorData = await response.json().catch(() => ({}));
+          const syncError = errorData.detail || `Backend sync failed (${response.status})`;
+          console.error('Failed to sync user to backend:', syncError);
+          return {
+            ...token,
+            sub: user.id,
+            syncError,
+          };
         } catch (error) {
           console.error('Failed to sync user to backend:', error);
         }
@@ -167,6 +176,7 @@ export const authOptions: NextAuthOptions = {
         return {
           ...token,
           sub: user.id,
+          syncError: 'Unable to connect to backend server',
         };
       }
       return token;
@@ -181,6 +191,7 @@ export const authOptions: NextAuthOptions = {
         accessToken: token.accessToken,
         isNewUser: token.isNewUser,
         onboardingCompleted: token.onboardingCompleted,
+        syncError: token.syncError,
       };
     },
   },

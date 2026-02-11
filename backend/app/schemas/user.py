@@ -65,6 +65,12 @@ class UserSyncResponse(BaseModel):
     access_token: str = Field(..., description="JWT token for API authentication")
 
 
+class AuthStatusResponse(BaseModel):
+    configured: bool
+    mode: str
+    error: str | None = None
+
+
 class SessionUser(BaseModel):
     id: UUID
     external_id: str

@@ -118,18 +118,45 @@ function DevLogin({ callbackUrl }: { callbackUrl: string }) {
   );
 }
 
+function BackendError({ message }: { message: string }) {
+  return (
+    <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm space-y-2">
+      <p className="font-medium text-destructive">Backend Configuration Error</p>
+      <p className="text-destructive/90">{message}</p>
+    </div>
+  );
+}
+
 function LoginContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { data: session, status } = useSession();
   const error = searchParams.get('error');
   const callbackUrl = searchParams.get('callbackUrl') || '/dashboard';
+  const [backendError, setBackendError] = useState<string | null>(null);
 
   useEffect(() => {
     if (status === 'authenticated' && session?.accessToken) {
       router.push(callbackUrl);
     }
   }, [status, session?.accessToken, callbackUrl, router]);
+
+  // Check backend auth configuration on mount
+  useEffect(() => {
+    fetch('/api/v1/auth/status')
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data.configured && data.error) {
+          setBackendError(data.error);
+        }
+      })
+      .catch(() => {
+        setBackendError('Unable to connect to backend server. Please check that the backend is running.');
+      });
+  }, []);
+
+  // Show sync error from session (e.g. backend returned 503 during login)
+  const syncError = session?.syncError;
 
   // Detect auth mode based on available providers
   const [authMode, setAuthMode] = useState<'loading' | 'forward-auth' | 'oidc' | 'dev'>('loading');
@@ -160,7 +187,11 @@ function LoginContent() {
 
   return (
     <>
-      {error && (
+      {backendError && <BackendError message={backendError} />}
+
+      {!backendError && syncError && <BackendError message={syncError} />}
+
+      {error && !backendError && !syncError && (
         <div className="rounded-md bg-destructive/15 p-4 text-sm text-destructive">
           {error === 'OAuthSignin' && 'Error starting authentication'}
           {error === 'OAuthCallback' && 'Error during authentication callback'}

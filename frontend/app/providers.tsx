@@ -13,7 +13,11 @@ function handleError(error: unknown) {
     toast.error(error.message);
   } else if (error instanceof ApiError) {
     // Don't show toast for 401 (handled by auth redirect)
-    if (error.status !== 401) {
+    if (error.status === 401) return;
+    // Show descriptive message for configuration/service errors
+    if (error.status === 503) {
+      toast.error(error.message, { duration: 8000 });
+    } else {
       toast.error(error.message);
     }
   }

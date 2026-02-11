@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     original_max_size: int = 2400
     image_quality: int = 90
 
-    def validate_security(self) -> None:
+    def validate_security(self) -> str | None:
         if self.secret_key == DEFAULT_SECRET_KEY and not self.debug:
             raise RuntimeError(
                 "SECRET_KEY is still the default value. "
@@ -89,11 +89,14 @@ class Settings(BaseSettings):
             )
 
         oidc_configured = oidc_issuer and oidc_client
-        if not self.auth_trust_header and not oidc_configured and not self.debug:
-            raise RuntimeError(
+        is_dev = self.debug and self.secret_key == DEFAULT_SECRET_KEY
+        if not self.auth_trust_header and not oidc_configured and not is_dev:
+            return (
                 "No authentication method configured. "
                 "Set OIDC_ISSUER_URL + OIDC_CLIENT_ID, or AUTH_TRUST_HEADER=true, or enable DEBUG mode."
             )
+
+        return None
 
     def get_auth_mode(self) -> str:
         if self.debug and self.secret_key == DEFAULT_SECRET_KEY:

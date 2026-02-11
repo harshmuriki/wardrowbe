@@ -12,6 +12,7 @@ declare module 'next-auth' {
     accessToken?: string;
     isNewUser?: boolean;
     onboardingCompleted?: boolean;
+    syncError?: string;
   }
 }
 
@@ -22,5 +23,6 @@ declare module 'next-auth/jwt' {
     backendUserId?: string;
     isNewUser?: boolean;
     onboardingCompleted?: boolean;
+    syncError?: string;
   }
 }
