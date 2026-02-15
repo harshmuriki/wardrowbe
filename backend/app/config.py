@@ -1,5 +1,6 @@
 import logging
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -8,10 +9,21 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SECRET_KEY = "change-me-in-production"
 
+# Look for .env in multiple locations (parent dir for local dev, current dir for Docker)
+def find_env_file():
+    candidates = [
+        Path(__file__).parent.parent.parent / ".env",  # Root of project (local dev)
+        Path(".env"),  # Current directory (Docker)
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return ".env"  # Fallback
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=find_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

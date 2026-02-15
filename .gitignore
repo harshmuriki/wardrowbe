@@ -47,6 +47,7 @@ htmlcov/
 postgres_data/
 redis_data/
 uploads/
+data/
 
 # Kubernetes secrets (NEVER commit actual secrets)
 k8s/secrets.yaml.local
@@ -55,3 +56,4 @@ k8s/*.secret.yaml
 # Local development
 *.local
 .claude/
+backend/data
