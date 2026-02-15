@@ -51,7 +51,10 @@ async def validate_oidc_id_token(
             algorithms=["RS256", "ES256"],
             audience=client_id,
             issuer=issuer_url,
-            options={"verify_exp": True},
+            options={
+                "verify_exp": True,
+                "verify_at_hash": False,  # NextAuth doesn't provide access_token
+            },
         )
     except JWTError as e:
         raise ValueError(f"Invalid OIDC token: {e}") from None
